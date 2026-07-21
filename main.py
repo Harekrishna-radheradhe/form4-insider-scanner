@@ -52,14 +52,45 @@ except ImportError:
     print("NOTE: options_volume_check not available — contamination filter disabled")
 
 
+def log_scan_run(scanner, source_status, n_evaluated, n_fired=0, note='', db_path=None):
+    """One row per scanner run -> shared signal-intelligence DB.
+    Distinguishes 'ran, evaluated 0 (empty/failed source)' from 'did not run at all'.
+    Never raises. db_path param exists for offline unit tests."""
+    try:
+        import os, sqlite3 as _sl
+        db = db_path or os.path.expanduser('~/signal_intelligence.db')
+        c = _sl.connect(db)
+        c.execute('''CREATE TABLE IF NOT EXISTS scan_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ran_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            scanner TEXT, source_status TEXT,
+            n_evaluated INTEGER, n_fired INTEGER, note TEXT)''')
+        c.execute('INSERT INTO scan_runs (scanner, source_status, n_evaluated, n_fired, note) VALUES (?,?,?,?,?)',
+                  (scanner, source_status, n_evaluated, n_fired, note))
+        c.commit(); c.close()
+    except Exception:
+        pass
+
+
 def fetch_and_store_filings():
     """Fetch recent Form 4 filings and store transactions."""
     fetcher = EdgarFetcher()
     parser = Form4Parser()
 
     print("Fetching recent Form 4 filings from SEC EDGAR...")
-    filings = fetcher.get_recent_form4_filings(count=100)
+    try:
+        filings = fetcher.get_recent_form4_filings(count=100)
+        # get_recent_form4_filings swallows HTTP errors -> []; a non-empty feed
+        # is unambiguously OK, an empty one is EMPTY. A hard exception is FETCH_FAIL.
+        source_status = 'OK' if filings else 'EMPTY'
+    except Exception as e:
+        print(f"  EDGAR feed fetch failed: {e}")
+        filings = []
+        source_status = 'FETCH_FAIL'
     print(f"Found {len(filings)} filings in feed")
+
+    # Candidates evaluated this run = every filing the feed handed us.
+    n_evaluated = len(filings)
 
     filings_processed = 0
     transactions_added = 0
@@ -102,7 +133,7 @@ def fetch_and_store_filings():
             errors += 1
 
     print(f"Processed {filings_processed} new filings, added {transactions_added} transactions, {errors} errors")
-    return filings_processed, transactions_added, errors
+    return filings_processed, transactions_added, errors, source_status, n_evaluated
 
 
 # ============================================================
@@ -311,11 +342,18 @@ def main():
     transactions_added = 0
     clusters = []
     sells = []
+    buy_alerts_sent = 0
+    sell_alerts_sent = 0
+    # Default run-level accounting for modes that don't fetch (analyze/status only):
+    # the source is the existing DB, not an EDGAR fetch.
+    source_status = 'OK'
+    n_evaluated = 0
 
     # Fetch new filings
     if not analyze_only and not status_only:
         print("\n" + "=" * 40)
-        filings_processed, transactions_added, errors = fetch_and_store_filings()
+        (filings_processed, transactions_added, errors,
+         source_status, n_evaluated) = fetch_and_store_filings()
 
     # Analyze for buying clusters (now includes Phase 4 contamination check)
     if not fetch_only and not status_only:
@@ -333,6 +371,14 @@ def main():
         print("Sending daily heartbeat status email...")
         send_status_report(filings_processed, transactions_added, clusters,
                            sells, dry_run=dry_run)
+
+    # Run-level heartbeat to the shared signal-intelligence DB: exactly one row
+    # per run so an empty-source run (n_evaluated=0) is distinguishable from a
+    # scanner that never ran at all.
+    log_scan_run(
+        'FORM4', source_status, n_evaluated,
+        n_fired=(buy_alerts_sent + sell_alerts_sent),
+    )
 
     print("\n" + "=" * 40)
     print("Scan complete!")
