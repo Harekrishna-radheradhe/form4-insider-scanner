@@ -10,6 +10,9 @@ __pycache__/
 *.pyc
 *.pyo
 .env
+.venv/
+venv/
+.pytest_cache/
 
 # Credentials - NEVER commit real config
 config.py
