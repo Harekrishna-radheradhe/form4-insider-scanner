@@ -71,8 +71,8 @@ def log_scan_run(scanner, source_status, n_evaluated, n_fired=0, note='', db_pat
         c.execute('INSERT INTO scan_runs (scanner, source_status, n_evaluated, n_fired, note) VALUES (?,?,?,?,?)',
                   (scanner, source_status, n_evaluated, n_fired, note))
         c.commit(); c.close()
-    except Exception:
-        pass
+    except Exception as _sr_err:
+        print(f"[SCAN_RUN_FAIL] {scanner}: {type(_sr_err).__name__}: {_sr_err}", flush=True)
 
 
 def log_signal_intelligence(scan_date, scanner, ticker, direction, fired,
