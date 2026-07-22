@@ -24,6 +24,7 @@ Usage:
 """
 
 import sys
+import os
 from datetime import datetime, timezone
 
 from config import EMAIL_CONFIG
@@ -47,9 +48,11 @@ from email_reporter import EmailReporter
 try:
     from options_volume_check import check_options_contamination
     OPTIONS_CHECK_AVAILABLE = True
-except ImportError:
+except ImportError as _ovc_err:
     OPTIONS_CHECK_AVAILABLE = False
-    print("NOTE: options_volume_check not available — contamination filter disabled")
+    print(f"[OPTIONS_CHECK_UNAVAILABLE] options_volume_check import failed: "
+          f"{type(_ovc_err).__name__}: {_ovc_err} — Phase-4 contamination filter DISABLED",
+          flush=True)
 
 
 def log_scan_run(scanner, source_status, n_evaluated, n_fired=0, note='', db_path=None):
@@ -70,6 +73,24 @@ def log_scan_run(scanner, source_status, n_evaluated, n_fired=0, note='', db_pat
         c.commit(); c.close()
     except Exception:
         pass
+
+
+def log_signal_intelligence(scan_date, scanner, ticker, direction, fired,
+                             signal_strength=None, signal_bucket=None,
+                             regime_filter_passed=None, regime_value=None,
+                             score=None):
+    """Write one signal_log row to the shared signal-intelligence DB. A failed
+    write is surfaced (never swallowed). Merged from PA production drift 2026-07-22."""
+    try:
+        import sqlite3 as _sl
+        db = os.path.expanduser('~/signal_intelligence.db')
+        c = _sl.connect(db)
+        c.execute('CREATE TABLE IF NOT EXISTS signal_log (id INTEGER PRIMARY KEY AUTOINCREMENT, scan_date TEXT, scanner TEXT, ticker TEXT, direction TEXT, fired INTEGER, signal_strength REAL, signal_bucket TEXT, regime_filter_passed INTEGER, regime_value REAL, score INTEGER, autotrader_acted INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP)')
+        c.execute('INSERT INTO signal_log (scan_date,scanner,ticker,direction,fired,signal_strength,signal_bucket,regime_filter_passed,regime_value,score) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                  (scan_date,scanner,ticker,direction,fired,signal_strength,signal_bucket,regime_filter_passed,regime_value,score))
+        c.commit(); c.close()
+    except Exception as _sl_err:
+        print(f"[SIGNAL_LOG_FAIL] {scanner} {ticker}: {type(_sl_err).__name__}: {_sl_err}", flush=True)
 
 
 def fetch_and_store_filings():
@@ -167,6 +188,8 @@ def check_cluster_contamination(clusters):
         event_date = cluster.get('last_purchase') or datetime.now().strftime('%Y-%m-%d')
 
         try:
+            if not OPTIONS_CHECK_AVAILABLE:
+                raise RuntimeError("options_volume_check unavailable — Phase-4 filter disabled")
             result = check_options_contamination(ticker, event_date)
             cluster['options_contamination'] = result
 
@@ -203,6 +226,16 @@ def analyze_and_alert(dry_run=False):
     print(f"Found {len(clusters)} potential clusters")
 
     today = datetime.now().strftime('%Y-%m-%d')
+    for c in clusters:
+        log_signal_intelligence(
+            scan_date=today,
+            scanner='F4_BUY_CLUSTER',
+            ticker=c['ticker'],
+            direction='BUY',
+            fired=1,
+            signal_strength=c.get('total_purchased'),
+            score=c.get('unique_insiders'),
+        )
     new_clusters = []
 
     for cluster in clusters:
@@ -254,6 +287,18 @@ def analyze_sells_and_alert(dry_run=False):
 
     # Find all significant sells (for logging)
     all_sells = sell_analyzer.find_sell_signals()
+    today = datetime.now().strftime('%Y-%m-%d')
+    for s in all_sells:
+        _tag = s['tier_tag'].replace('SELL_', '')
+        log_signal_intelligence(
+            scan_date=today,
+            scanner=f'F4_SELL_{_tag}',
+            ticker=s['ticker'],
+            direction='SHORT',
+            fired=1 if s['tier_tag'] in ('S1','S2') else 0,
+            signal_strength=s.get('total_value'),
+            score=s.get('num_sellers'),
+        )
     s1_total = sum(1 for s in all_sells if s['tier_tag'] == 'S1')
     s2_total = sum(1 for s in all_sells if s['tier_tag'] == 'S2')
     watch_total = sum(1 for s in all_sells if s['tier_tag'] == 'SELL_WATCH')

@@ -48,8 +48,11 @@ except ImportError:
 try:
     from options_volume_check import check_options_contamination
     OPTIONS_CHECK_AVAILABLE = True
-except ImportError:
+except ImportError as _ovc_err:
     OPTIONS_CHECK_AVAILABLE = False
+    print(f"[OPTIONS_CHECK_UNAVAILABLE] options_volume_check import failed: "
+          f"{type(_ovc_err).__name__}: {_ovc_err} — Phase-4 contamination filter DISABLED",
+          flush=True)
 
 # Database path (same as Form 4 scanner)
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -76,6 +79,24 @@ SI_SURGE_THRESHOLD = 25   # SI increase % for "surging" tier
 # ---------------------------------------------------------------------------
 # DATABASE: Query recent insider purchases
 # ---------------------------------------------------------------------------
+def log_signal_intelligence(scan_date, scanner, ticker, direction, fired,
+                             signal_strength=None, signal_bucket=None,
+                             regime_filter_passed=None, regime_value=None,
+                             score=None):
+    """Write one signal_log row to the shared signal-intelligence DB. A failed
+    write is surfaced (never swallowed). Merged from PA production drift 2026-07-22."""
+    try:
+        import sqlite3 as _sl
+        db = os.path.expanduser('~/signal_intelligence.db')
+        c = _sl.connect(db)
+        c.execute('CREATE TABLE IF NOT EXISTS signal_log (id INTEGER PRIMARY KEY AUTOINCREMENT, scan_date TEXT, scanner TEXT, ticker TEXT, direction TEXT, fired INTEGER, signal_strength REAL, signal_bucket TEXT, regime_filter_passed INTEGER, regime_value REAL, score INTEGER, autotrader_acted INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP)')
+        c.execute('INSERT INTO signal_log (scan_date,scanner,ticker,direction,fired,signal_strength,signal_bucket,regime_filter_passed,regime_value,score) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                  (scan_date,scanner,ticker,direction,fired,signal_strength,signal_bucket,regime_filter_passed,regime_value,score))
+        c.commit(); c.close()
+    except Exception as _sl_err:
+        print(f"[SIGNAL_LOG_FAIL] {scanner} {ticker}: {type(_sl_err).__name__}: {_sl_err}", flush=True)
+
+
 def get_recent_purchases(days_back=LOOKBACK_DAYS):
     """
     Pull recent open-market purchases from the Form 4 database.
@@ -305,6 +326,8 @@ def check_signals_contamination(signals):
         event_date = signal.get('transaction_date') or datetime.now().strftime('%Y-%m-%d')
 
         try:
+            if not OPTIONS_CHECK_AVAILABLE:
+                raise RuntimeError("options_volume_check unavailable — Phase-4 filter disabled")
             result = check_options_contamination(ticker, event_date)
             signal['options_contamination'] = result
 
@@ -702,6 +725,17 @@ def main():
 
     # Step 2: Filter for Tier2 (C-Suite + $500K+)
     tier2 = filter_tier2(purchases)
+    today = datetime.now().strftime('%Y-%m-%d')
+    for t in tier2:
+        log_signal_intelligence(
+            scan_date=today,
+            scanner='F4_CROSS_TIER2',
+            ticker=t['ticker'],
+            direction='BUY',
+            fired=1,
+            signal_strength=t.get('total_value'),
+            score=1,
+        )
     if not tier2:
         print("No Tier2 signals — no email sent.")
         return
