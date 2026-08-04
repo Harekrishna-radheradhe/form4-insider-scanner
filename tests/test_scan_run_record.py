@@ -97,6 +97,13 @@ def _rows(signal_db):
         return []
     con = sqlite3.connect(str(signal_db))
     try:
+        # signal_log may legitimately not exist at all now: a fired=0 night writes
+        # only scan_runs, and nothing creates signal_log until a signal fires. A
+        # missing table is zero signals, not an error.
+        if not con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='signal_log'"
+        ).fetchone():
+            return []
         return con.execute(
             "SELECT scan_date, scanner, ticker, direction, fired, signal_bucket "
             "FROM signal_log ORDER BY id"
@@ -105,12 +112,36 @@ def _rows(signal_db):
         con.close()
 
 
+def _runs(signal_db):
+    """The scan_runs rows — run evidence, as distinct from signal evidence."""
+    if not signal_db.exists():
+        return []
+    con = sqlite3.connect(str(signal_db))
+    try:
+        present = con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='scan_runs'"
+        ).fetchone()
+        if not present:
+            return []
+        return con.execute(
+            "SELECT scanner, source_status, n_evaluated, n_fired FROM scan_runs ORDER BY id"
+        ).fetchall()
+    finally:
+        con.close()
+
+
 def _pa_watch_view(signal_db):
-    """pa_watch's own query, verbatim from ops/obs/pa_watch.py:111."""
+    """pa_watch's own query, verbatim from ops/obs/pa_watch.read_run_history.
+
+    Updated 2026-08-04 with the module it mirrors: pa_watch reads scan_runs now,
+    because signal_log answers "what did it FIND" and this test is about "did it
+    RUN". A mirror test that keeps mirroring the OLD query would go green while
+    the board went blind, which is the failure mode it exists to prevent.
+    """
     con = sqlite3.connect(str(signal_db))
     try:
         return dict(con.execute(
-            "SELECT scanner, MAX(scan_date) FROM signal_log "
+            "SELECT scanner, MAX(ran_at) FROM scan_runs "
             "WHERE scanner IS NOT NULL GROUP BY scanner"
         ).fetchall())
     finally:
@@ -127,15 +158,15 @@ def test_a_zero_tier2_night_still_publishes_a_run_record(monkeypatch, tmp_path):
 
     css.main()
 
-    rows = _rows(signal_db)
-    assert rows, "a completed zero-Tier2 scan wrote NOTHING — the fired=0 night is invisible"
-    runs = [r for r in rows if r[2] == css.RUN_SENTINEL_TICKER]
-    assert len(runs) == 1, f"expected exactly one RUN record, got {runs}"
-    scan_date, scanner, _ticker, _dir, fired, bucket = runs[0]
+    runs = _runs(signal_db)
+    assert runs, "a completed zero-Tier2 scan wrote NOTHING — the fired=0 night is invisible"
+    assert len(runs) == 1, f"expected exactly one run record, got {runs}"
+    scanner, source_status, n_evaluated, n_fired = runs[0]
     assert scanner == "F4_CROSS_TIER2"
-    assert scan_date == "2026-07-27"
-    assert fired == 0, "a RUN record must not claim a signal fired"
-    assert bucket == "RUN"
+    assert source_status == "OK", "the source was readable — say so"
+    assert n_evaluated == 1, "it evaluated the one purchase it was given"
+    assert n_fired == 0, "a run record must not claim a signal fired"
+    assert _rows(signal_db) == [], "a fired=0 night must leave signal_log empty"
 
 
 def test_the_run_record_is_what_pa_watch_actually_reads(monkeypatch, tmp_path):
@@ -148,7 +179,14 @@ def test_the_run_record_is_what_pa_watch_actually_reads(monkeypatch, tmp_path):
 
     css.main()
 
-    assert _pa_watch_view(signal_db).get("F4_CROSS_TIER2") == "2026-07-27"
+    seen = _pa_watch_view(signal_db).get("F4_CROSS_TIER2")
+    assert seen is not None, "pa_watch's own query does not see the run at all"
+    # `ran_at` is SQLite's CURRENT_TIMESTAMP — the wall clock of the machine that
+    # RAN the scan — not the pinned `scan_date` the signal rows carry. That is the
+    # correct difference and not an oversight: a run happened at a time, whereas a
+    # signal is ABOUT a date. Asserting the pinned date here would be asserting
+    # that the test's fake clock had reached into the database engine.
+    assert datetime.strptime(seen, "%Y-%m-%d %H:%M:%S"), f"unparseable ran_at: {seen!r}"
 
 
 def test_a_firing_night_records_both_the_signal_and_the_run(monkeypatch, tmp_path):
@@ -169,11 +207,11 @@ def test_a_firing_night_records_both_the_signal_and_the_run(monkeypatch, tmp_pat
     except RuntimeError:
         pass
 
-    rows = _rows(signal_db)
-    fired = [r for r in rows if r[4] == 1]
-    runs = [r for r in rows if r[2] == css.RUN_SENTINEL_TICKER]
+    fired = [r for r in _rows(signal_db) if r[4] == 1]
+    runs = _runs(signal_db)
     assert len(fired) == 1 and fired[0][2] == "LOUD"
     assert len(runs) == 1, "a firing night must ALSO record that the scan ran"
+    assert runs[0][0] == "F4_CROSS_TIER2"
 
 
 # --------------------------------------------------------------------------- #
@@ -191,7 +229,7 @@ def test_no_run_record_when_the_source_db_is_missing(monkeypatch, tmp_path, caps
 
     css.main()
 
-    assert not [r for r in _rows(signal_db) if r[2] == css.RUN_SENTINEL_TICKER], \
+    assert _runs(signal_db) == [], \
         "wrote a liveness record for a scan whose source DB was absent"
     assert "[SCAN_RUN_SKIPPED]" in capsys.readouterr().out, \
         "skipping the run record must be LOUD, not silent"
@@ -207,22 +245,35 @@ def test_the_weekend_skip_writes_no_run_record(monkeypatch, tmp_path):
 
     css.main()
 
-    assert _rows(signal_db) == [], "claimed a scan on a day it deliberately skipped"
+    assert _rows(signal_db) == [], "claimed a signal on a day it deliberately skipped"
+    assert _runs(signal_db) == [], "claimed a scan on a day it deliberately skipped"
 
 
 def test_a_run_record_write_failure_is_loud(monkeypatch, capsys):
-    """The run record rides the existing [SIGNAL_LOG_FAIL] visibility contract."""
+    """The run record rides the [SCAN_RUN_FAIL] visibility contract — the same
+    word main.py already uses for the same table, so one grep finds both."""
     monkeypatch.setattr(css.os.path, "expanduser",
                         lambda p: "/does/not/exist/nope/signal_intelligence.db")
 
-    css.log_scan_run("2026-07-27")
+    css.log_scan_run("F4_CROSS_TIER2", "OK", 0)
 
     out = capsys.readouterr().out
-    assert "[SIGNAL_LOG_FAIL]" in out
+    assert "[SCAN_RUN_FAIL]" in out
     assert "F4_CROSS_TIER2" in out
 
 
-def test_the_run_sentinel_cannot_collide_with_a_real_ticker():
-    """A sentinel a ticker could equal would silently corrupt signal rows."""
-    assert css.RUN_SENTINEL_TICKER.startswith("__")
-    assert not css.RUN_SENTINEL_TICKER.isalnum()
+def test_there_is_no_sentinel_left_to_collide_with_anything():
+    """SUPERSEDES `test_the_run_sentinel_cannot_collide_with_a_real_ticker`.
+
+    That test asked whether the sentinel ticker was distinguishable from a real
+    symbol. It was — and the collision it guarded against never happened. The one
+    that DID happen was invisible to it: a sentinel row carries `direction=NULL`,
+    SQLite treats NULLs as DISTINCT in a UNIQUE index, and the Studio's dedup
+    could therefore neither ignore the row nor tolerate the duplicate it kept
+    making. Six days of pipeline outage, from a row whose *ticker* was beyond
+    reproach.
+
+    The class is now closed by construction rather than by naming convention:
+    there is no sentinel, because run records are not signal rows.
+    """
+    assert not hasattr(css, "RUN_SENTINEL_TICKER")

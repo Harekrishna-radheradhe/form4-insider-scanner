@@ -97,44 +97,40 @@ def log_signal_intelligence(scan_date, scanner, ticker, direction, fired,
         print(f"[SIGNAL_LOG_FAIL] {scanner} {ticker}: {type(_sl_err).__name__}: {_sl_err}", flush=True)
 
 
-# Sentinel ticker marking a RUN record (item 2b, JOB-20260727-MONDAY): a row that
-# says "this scanner completed a scan and fired nothing", as distinct from "this
-# scanner fired a signal for this ticker". Deliberately not a legal ticker shape so
-# it can never be confused with a real symbol by any consumer.
-RUN_SENTINEL_TICKER = "__RUN__"
+def log_scan_run(scanner, source_status, n_evaluated, n_fired=0, note='', db_path=None):
+    """One row per scanner RUN -> `scan_runs` in the shared signal-intelligence DB.
 
+    Distinguishes "ran, evaluated 0" from "did not run at all" — the question
+    `signal_log` structurally cannot answer, because a scanner that runs and finds
+    nothing writes no signal row. Same helper, same table and same contract as
+    `main.log_scan_run`; kept local rather than imported because this scanner is a
+    separate PythonAnywhere scheduled task with its own entry point.
 
-def log_scan_run(scan_date, scanner='F4_CROSS_TIER2'):
-    """Record that ``scanner`` COMPLETED a scan on ``scan_date`` — fired or not.
+    **Why not the sentinel-ticker row this replaces (added 2026-07-27).** That
+    row lived in `signal_log` with `direction=NULL`. SQLite treats NULLs as DISTINCT
+    inside a UNIQUE index, so the Studio's `INSERT OR IGNORE` could not dedup it and
+    re-inserted it on every sync; the resulting duplicate then tripped the sync's own
+    dedup pre-check and stopped the entire PA->Studio pipeline from 2026-07-30 to
+    2026-08-04. The sentinel's stated reason — that `scan_runs` "does NOT reach the
+    Studio" — was true when written and is no longer: `scan_runs` is written to the
+    SHARED `~/signal_intelligence.db`, and the Studio sync merges it as of 08-04.
 
-    **Why this exists.** The Studio's `ops/obs/pa_watch.py:111` judges collector
-    liveness with `SELECT scanner, MAX(scan_date) FROM signal_log GROUP BY scanner`,
-    and this scanner previously wrote to `signal_log` only when a Tier-2 cross
-    FIRED. The board was therefore reading "last time it found something" and
-    reporting it as "last time it ran" — for a fired=0 design, two different
-    questions. Measured on the Studio 2026-07-27: `MAX(scan_date)` = 2026-06-11 with
-    13 rows in the scanner's entire history, all `fired=1`, while the PA task log
-    showed nightly runs at return code 0. Alive-and-quiet was indistinguishable
-    from dead, and `pa_watch` paged on it.
-
-    **Why a `fired=0` row rather than a new table.** The `fired` column already
-    exists for exactly this distinction, and `fired=0` rows are already the
-    convention on 10 of the farm's 14 real scanners. The per-scanner `scan_runs`
-    heartbeat added 2026-07-22 lives in each scanner's own DB and does NOT reach the
-    Studio — the synced `signal_intelligence.db` holds only `signal_log` and
-    `ticker_sigma_history` — so `signal_log` is the one table that can serve this.
-
-    **Why a RUN row rather than per-candidate `fired=0` rows.** On a night with zero
-    Tier-2 candidates the per-candidate loop is empty, so per-candidate logging
-    cannot help in the exact case that matters.
-
-    A write failure rides the existing `[SIGNAL_LOG_FAIL]` contract — surfaced,
-    never swallowed.
+    Never raises. `db_path` exists for offline unit tests.
     """
-    log_signal_intelligence(
-        scan_date=scan_date, scanner=scanner, ticker=RUN_SENTINEL_TICKER,
-        direction=None, fired=0, signal_bucket='RUN',
-    )
+    try:
+        import sqlite3 as _sl
+        db = db_path or os.path.expanduser('~/signal_intelligence.db')
+        c = _sl.connect(db)
+        c.execute('''CREATE TABLE IF NOT EXISTS scan_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ran_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            scanner TEXT, source_status TEXT,
+            n_evaluated INTEGER, n_fired INTEGER, note TEXT)''')
+        c.execute('INSERT INTO scan_runs (scanner, source_status, n_evaluated, n_fired, note) VALUES (?,?,?,?,?)',
+                  (scanner, source_status, n_evaluated, n_fired, note))
+        c.commit(); c.close()
+    except Exception as _sr_err:
+        print(f"[SCAN_RUN_FAIL] {scanner}: {type(_sr_err).__name__}: {_sr_err}", flush=True)
 
 
 def get_recent_purchases(days_back=LOOKBACK_DAYS):
@@ -757,21 +753,18 @@ def main():
     # Step 1: Get recent purchases from Form 4 database
     purchases = get_recent_purchases()
 
-    # Step 1b: RUN RECORD (item 2b). ONE row per completed scan, written HERE so it
-    # covers every downstream exit — zero purchases, zero Tier-2, or a full firing
-    # night — from a single site. Without it a fired=0 night is invisible to
-    # `pa_watch`, which reads only `MAX(scan_date)` from `signal_log`.
+    # Step 1b: RUN RECORD. ONE row per completed scan, written HERE so it covers
+    # every downstream exit — zero purchases, zero Tier-2, or a full firing night —
+    # from a single site. Without it a fired=0 night is invisible to `pa_watch`,
+    # which judges collector liveness from run evidence.
     #
     # GATED on the source DB existing, and that gate is the point:
     # `get_recent_purchases` returns [] for a MISSING database (it prints ERROR and
-    # bails at :105) and for a genuinely empty one alike. Writing the record
-    # unconditionally would publish proof of life every night for a permanently
-    # broken scanner — the vacuous pass constitution A6 forbids. The skip is LOUD.
-    #
-    # `scan_date` uses the same bare `datetime.now()` expression as the fired=1 rows
-    # below, so a run record and a signal record from one night always share a date.
+    # bails) and for a genuinely empty one alike. Writing the record unconditionally
+    # would publish proof of life every night for a permanently broken scanner —
+    # the vacuous pass constitution A6 forbids. The skip is LOUD.
     if os.path.exists(DB_PATH):
-        log_scan_run(datetime.now().strftime('%Y-%m-%d'))
+        log_scan_run('F4_CROSS_TIER2', 'OK', n_evaluated=len(purchases))
     else:
         print(f"[SCAN_RUN_SKIPPED] source DB absent at {DB_PATH} — no run record "
               f"written. A liveness record for a scan that could not read its input "
