@@ -188,7 +188,13 @@ class SellSignalAnalyzer:
             results.append(data)
         
         # Sort tickers: S1 first, then S2, then WATCH; within tier by total value
-        results.sort(key=lambda r: (tier_priority.get(r['tier_tag'], 99), -r['total_value']))
+        # `or 0` for the same reason as the per-sell sort above: a
+        # price-unknown row now carries total_value=None, and unary minus on
+        # None raises. Sorting is the one place the unknown is allowed to
+        # stand in as 0 — it decides display order, not a threshold or a
+        # reported figure.
+        results.sort(key=lambda r: (tier_priority.get(r['tier_tag'], 99),
+                                    -(r['total_value'] or 0)))
         
         return results
     

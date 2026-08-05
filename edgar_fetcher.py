@@ -1,11 +1,18 @@
 """
 SEC EDGAR Form 4 Filing Fetcher
 """
+import re
 import requests
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from config import EDGAR_CONFIG
+
+# EDGAR stamps acceptance times in US Eastern with no offset in the field, so
+# the zone has to be supplied here to make the stored value unambiguous.
+_EDGAR_TZ = ZoneInfo('America/New_York')
+_ACCEPTANCE_RE = re.compile(r'<ACCEPTANCE-DATETIME>\s*(\d{14})')
 
 class EdgarFetcher:
     def __init__(self):
@@ -105,6 +112,60 @@ class EdgarFetcher:
             print(f"Error parsing filing index: {e}")
         return None
     
+    def fetch_acceptance_datetime(self, cik, accession_number):
+        """SEC's TRUE acceptance datetime for an accession, as ISO 8601.
+
+        Source: the <ACCEPTANCE-DATETIME> field in the accession's full SGML
+        submission header. Neither index.json nor the primary XML document
+        carries it, so this is the only place the value exists.
+
+        Verified against two real filings on 2026-08-05 rather than assumed
+        from the field's description:
+            0001104659-26-019194 -> 20260224165940 (FILED AS OF DATE 20260224)
+            0001213900-26-016727 -> 20260213214702 (FILED AS OF DATE 20260213)
+        The field is 14 digits, YYYYMMDDHHMMSS, US/Eastern, and carries no
+        offset of its own — hence the explicit zone below. The second example
+        also confirms the late-evening case: Section 16 filings accepted before
+        22:00 ET still book the same filing date.
+
+        `cik` must be a CIK associated with the filing (issuer or reporting
+        owner). The accession-number prefix is the filing AGENT's CIK and the
+        Archives path 404s under it.
+
+        Returns None if the fetch fails or the field is absent/malformed —
+        never a guess. The caller decides what to do with a missing value;
+        parse() will refuse to stamp one.
+        """
+        accession_dashed = self._format_accession(accession_number)
+        accession_clean = accession_dashed.replace('-', '')
+        cik_clean = str(cik).lstrip('0') or '0'
+        url = (f"https://www.sec.gov/Archives/edgar/data/{cik_clean}/"
+               f"{accession_clean}/{accession_dashed}.txt")
+        response = self._make_request(url)
+        if not response:
+            return None
+        match = _ACCEPTANCE_RE.search(response.text)
+        if not match:
+            print(f"No <ACCEPTANCE-DATETIME> in submission header: {url}")
+            return None
+        try:
+            naive = datetime.strptime(match.group(1), '%Y%m%d%H%M%S')
+        except ValueError as e:
+            print(f"Malformed acceptance datetime for {accession_dashed}: {e}")
+            return None
+        return naive.replace(tzinfo=_EDGAR_TZ).isoformat()
+
+    @staticmethod
+    def _format_accession(accession_number):
+        """Normalise an accession to EDGAR's dashed form (0001104659-26-019194).
+
+        The atom feed hands us the undashed form; the DB carries both.
+        """
+        digits = str(accession_number).replace('-', '')
+        if len(digits) == 18:
+            return f"{digits[:10]}-{digits[10:12]}-{digits[12:]}"
+        return str(accession_number)
+
     def fetch_form4_xml(self, cik, accession_number):
         xml_url = self.get_filing_index(cik, accession_number)
         if not xml_url:

@@ -2,15 +2,31 @@
 Form 4 XML Parser
 """
 import xml.etree.ElementTree as ET
-from datetime import datetime
+
 
 class Form4Parser:
     TRANSACTION_CODES = {
         'P': 'Open market purchase', 'S': 'Open market sale', 'A': 'Grant/Award',
         'M': 'Exercise of derivative', 'G': 'Gift', 'F': 'Payment of exercise price',
     }
-    
-    def parse(self, xml_content, accession_number=None, filing_date=None):
+
+    def parse(self, xml_content, accession_number=None, filing_date=None,
+              accepted_datetime=None):
+        """Parse a Form 4 XML document into transaction dicts.
+
+        `accepted_datetime` is REQUIRED: it is SEC's EDGAR acceptance datetime
+        for this accession, which pre-registration §0.4 makes the
+        signal-eligible time. It is the caller's job to fetch it (see
+        EdgarFetcher.fetch_acceptance_datetime). This used to default to
+        datetime.now() — the wall-clock moment the parser happened to run —
+        which is a lookahead surface wearing the acceptance field's name, so
+        there is deliberately no fallback here.
+        """
+        if not accepted_datetime:
+            raise ValueError(
+                "accepted_datetime is required — pass SEC's EDGAR acceptance "
+                "datetime for this accession (EdgarFetcher.fetch_acceptance_"
+                "datetime). Stamping the parser's own clock is lookahead.")
         if not xml_content:
             return []
         try:
@@ -26,7 +42,7 @@ class Form4Parser:
             transaction = {
                 'accession_number': accession_number,
                 'filing_date': filing_date,
-                'accepted_datetime': datetime.now().isoformat(),
+                'accepted_datetime': accepted_datetime,
                 **issuer_info, **owner_info, **txn
             }
             transactions.append(transaction)
@@ -95,13 +111,21 @@ class Form4Parser:
             holdings = txn.find('postTransactionAmounts')
             shares_after = holdings.find('sharesOwnedFollowingTransaction/value') if holdings is not None else None
             shares_amount = float(shares.text) if shares is not None and shares.text else 0
-            price_per_share = float(price.text) if price is not None and price.text else 0
+            # A filing that carries no <transactionPricePerShare> states an
+            # UNKNOWN price, not a zero one. Writing 0.0 here made the two
+            # indistinguishable, and "the insider transacted at zero dollars"
+            # never happens. None/NULL keeps the distinction and forces every
+            # downstream consumer to make the decision explicitly.
+            # An explicit 0.00 (grants/awards carry one) is a KNOWN zero and is
+            # left alone.
+            price_per_share = float(price.text) if price is not None and price.text else None
             return {
                 'transaction_date': txn_date.text.strip() if txn_date is not None and txn_date.text else None,
                 'transaction_code': txn_code.text.strip() if txn_code is not None and txn_code.text else None,
                 'shares_amount': shares_amount,
                 'price_per_share': price_per_share,
-                'total_value': shares_amount * price_per_share,
+                'total_value': (shares_amount * price_per_share
+                                if price_per_share is not None else None),
                 'acquired_disposed': acq_disp.text.strip() if acq_disp is not None and acq_disp.text else None,
                 'shares_owned_after': float(shares_after.text) if shares_after is not None and shares_after.text else None,
             }
@@ -111,7 +135,9 @@ class Form4Parser:
 
 
 # Convenience function for imports
-def parse_form4_filing(xml_content, accession_number=None, filing_date=None):
+def parse_form4_filing(xml_content, accession_number=None, filing_date=None,
+                       accepted_datetime=None):
     """Wrapper function to match main.py import expectations."""
     parser = Form4Parser()
-    return parser.parse(xml_content, accession_number, filing_date)
+    return parser.parse(xml_content, accession_number, filing_date,
+                        accepted_datetime)

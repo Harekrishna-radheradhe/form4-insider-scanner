@@ -139,7 +139,23 @@ def fetch_and_store_filings():
                 continue
 
             filing_date = filing.get('updated', '')[:10] if filing.get('updated') else None
-            transactions = parser.parse(xml_content, accession, filing_date)
+
+            # §0.4: the signal-eligible time is SEC's EDGAR acceptance
+            # datetime, so it is fetched here and threaded in. The parser no
+            # longer has a clock to fall back on. A filing whose acceptance
+            # time cannot be established is skipped and marked, not ingested
+            # with an invented timestamp.
+            accepted_datetime = fetcher.fetch_acceptance_datetime(cik, accession)
+            if not accepted_datetime:
+                print(f"  {accession}: no EDGAR acceptance datetime — skipped "
+                      f"rather than stamped with our own clock")
+                mark_filing_processed(accession, 'error',
+                                      'No EDGAR acceptance datetime')
+                errors += 1
+                continue
+
+            transactions = parser.parse(xml_content, accession, filing_date,
+                                        accepted_datetime)
 
             for txn in transactions:
                 if insert_transaction(txn):

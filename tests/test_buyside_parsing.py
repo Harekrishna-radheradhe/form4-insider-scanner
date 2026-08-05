@@ -8,6 +8,10 @@ import os
 import pytest
 
 from form4_parser import Form4Parser
+
+# parse() now requires SEC's EDGAR acceptance datetime (spec §3B) — the
+# parser no longer stamps its own clock, so every caller supplies one.
+ACCEPTED = '2026-07-20T18:12:44-04:00'
 import database as db
 
 
@@ -88,7 +92,7 @@ def temp_db(tmp_path, monkeypatch):
 def test_parser_captures_purchase_row():
     """A P/A open-market purchase must be captured by the parser."""
     txns = Form4Parser().parse(SYNTHETIC_FORM4, accession_number='ACC-P-1',
-                               filing_date='2026-07-17')
+                               filing_date='2026-07-17', accepted_datetime=ACCEPTED)
     purchases = [t for t in txns if t['transaction_code'] == 'P']
     assert len(purchases) == 1, "parser dropped the open-market purchase row"
     p = purchases[0]
@@ -101,7 +105,7 @@ def test_parser_captures_purchase_row():
 
 def test_parser_keeps_all_three_codes():
     """Parser must not silently drop P, S, or A rows."""
-    txns = Form4Parser().parse(SYNTHETIC_FORM4)
+    txns = Form4Parser().parse(SYNTHETIC_FORM4, accepted_datetime=ACCEPTED)
     codes = sorted(t['transaction_code'] for t in txns)
     assert codes == ['A', 'P', 'S']
 
@@ -112,7 +116,7 @@ def test_parser_real_edgar_purchase_fixture():
     with open(path) as f:
         xml = f.read()
     txns = Form4Parser().parse(xml, accession_number='0001009165-26-000006',
-                               filing_date='2026-07-20')
+                               filing_date='2026-07-20', accepted_datetime=ACCEPTED)
     purchases = [t for t in txns if t['transaction_code'] == 'P']
     assert len(purchases) == 1, "real-world P purchase was dropped by parser"
     p = purchases[0]
@@ -130,7 +134,7 @@ def test_purchase_survives_end_to_end(temp_db):
     purchase-counting queries return the P buy and EXCLUDE the equity grant.
     """
     txns = Form4Parser().parse(SYNTHETIC_FORM4, accession_number='ACC-E2E-1',
-                               filing_date='2026-07-17')
+                               filing_date='2026-07-17', accepted_datetime=ACCEPTED)
     for t in txns:
         assert db.insert_transaction(t) is True
 
@@ -153,7 +157,7 @@ def test_real_purchase_survives_end_to_end(temp_db):
     with open(path) as f:
         xml = f.read()
     txns = Form4Parser().parse(xml, accession_number='0001009165-26-000006',
-                               filing_date='2026-07-20')
+                               filing_date='2026-07-20', accepted_datetime=ACCEPTED)
     for t in txns:
         db.insert_transaction(t)
 

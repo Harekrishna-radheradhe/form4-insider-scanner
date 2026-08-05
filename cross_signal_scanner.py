@@ -149,6 +149,15 @@ def get_recent_purchases(days_back=LOOKBACK_DAYS):
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days_back)).strftime('%Y-%m-%d')
 
     # Get open market purchases (transaction_code = 'P')
+    #
+    # The COALESCE keeps its middle arm — total_value NULL with a KNOWN price is
+    # still recoverable as shares x price — but its `, 0` tail is gone. Folding
+    # an unknown price to $0 let a price-unknown row be ranked and thresholded
+    # as a real data point worth nothing, which is RULED OUT (spec §4, PM
+    # 2026-08-05). Rows whose price is unknown are excluded from this path
+    # entirely: not zeroed, not silently ranked last. They are counted and
+    # reported below so the exclusion is visible rather than a quieter version
+    # of the same silence.
     cursor.execute("""
         SELECT
             issuer_ticker AS ticker,
@@ -157,17 +166,27 @@ def get_recent_purchases(days_back=LOOKBACK_DAYS):
             transaction_date,
             shares_amount AS shares,
             price_per_share,
-            COALESCE(total_value, shares_amount * price_per_share, 0) AS total_value
+            COALESCE(total_value, shares_amount * price_per_share) AS total_value
         FROM form4_transactions
         WHERE transaction_code = 'P'
           AND transaction_date >= ?
         ORDER BY transaction_date DESC
     """, (cutoff,))
 
-    rows = [dict(r) for r in cursor.fetchall()]
+    all_rows = [dict(r) for r in cursor.fetchall()]
     conn.close()
 
+    rows = [r for r in all_rows if r['total_value'] is not None]
+    n_unknown = len(all_rows) - len(rows)
+
     print(f"Found {len(rows)} open-market purchases in last {days_back} days")
+    if n_unknown:
+        excluded = ', '.join(
+            f"{r['ticker']} ({r['shares']:,.0f} sh, {r['transaction_date']})"
+            for r in all_rows if r['total_value'] is None)
+        print(f"EXCLUDED {n_unknown} purchase(s) with price unknown — no "
+              f"transaction price in the filing, so no value to rank or "
+              f"threshold: {excluded}")
     return rows
 
 
@@ -182,10 +201,38 @@ def is_csuite(title):
     return any(kw.lower() in title_lower for kw in CSUITE_KEYWORDS)
 
 
+PRICE_UNKNOWN_LABEL = 'price unknown'
+
+
+def format_purchase_line(s):
+    """Render one purchase for a human: value, share count, unit price.
+
+    A price-unknown row says so in words. Never $0 (reads as a real, wrong
+    data point), never blank (reads as an oversight), never the literal
+    None/null (reads as a bug). Ruled: spec §4, PM 2026-08-05. The share
+    count is KNOWN even when the price is not, so it is still shown.
+    """
+    shares = s.get('shares')
+    shares_str = f"{shares:,.0f} shares" if shares is not None else "shares unknown"
+    if s.get('total_value') is None or s.get('price_per_share') is None:
+        return f"{PRICE_UNKNOWN_LABEL} ({shares_str}, no price in filing)"
+    return (f"${s['total_value']:,.0f} ({shares_str} "
+            f"@ ${s['price_per_share']:.2f})")
+
+
 def filter_tier2(purchases):
-    """Filter for Tier2: C-Suite + $500K+ purchase value."""
+    """Filter for Tier2: C-Suite + $500K+ purchase value.
+
+    A price-unknown row has no value to compare against the threshold, so it
+    cannot pass it — and must not be coerced to 0 in order to fail it, which
+    would be the same silent zero one layer down. get_recent_purchases already
+    excludes these; the guard is here because this function is callable on its
+    own.
+    """
     tier2 = []
     for p in purchases:
+        if p.get('total_value') is None:
+            continue
         if is_csuite(p['insider_title']) and p['total_value'] >= MIN_PURCHASE_VALUE:
             tier2.append(p)
 
@@ -441,7 +488,10 @@ def classify_signals(tier2_purchases, si_data, macro_regime=None):
         }
         signals.append(signal)
 
-    signals.sort(key=lambda x: (x['tier_num'], -x['total_value']))
+    # `or 0` guards unary minus against a None total_value, as in analyzer.py.
+    # Sorting is display order, not a threshold — get_recent_purchases has
+    # already excluded price-unknown rows from this path.
+    signals.sort(key=lambda x: (x['tier_num'], -(x['total_value'] or 0)))
     return signals
 
 
@@ -572,7 +622,7 @@ def build_email_html(signals, all_purchases_count, tier2_count, macro_regime=Non
                     </tr>
                     <tr>
                         <td style="padding: 2px 10px 2px 0;"><b>Purchase:</b></td>
-                        <td>${s['total_value']:,.0f} ({s['shares']:,.0f} shares @ ${s['price_per_share']:.2f})</td>
+                        <td>{format_purchase_line(s)}</td>
                     </tr>
             """
 
@@ -818,7 +868,7 @@ def main():
         contam_tag = " ⚠️ OPT-CONTAMINATED" if contam.get('contaminated') else ""
         print(f"\n  {s['ticker']} — {s['tier']}{contam_tag}")
         print(f"    {s['insider_name']} ({s['insider_title']})")
-        print(f"    ${s['total_value']:,.0f} on {s['transaction_date']}")
+        print(f"    {format_purchase_line(s)} on {s['transaction_date']}")
         if not s['si_error']:
             print(f"    DTC: {s['days_to_cover']:.1f} | "
                   f"SI Change: {s['si_change_pct']:+.1f}% | "

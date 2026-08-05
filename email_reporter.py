@@ -82,8 +82,19 @@ def _vix_banner(vix):
             f'Consider half-sizing positions and wider stops.</div>')
 
 
+PRICE_UNKNOWN_LABEL = 'price unknown'
+
+
 def _fmt_value(val):
-    """Format dollar value compactly."""
+    """Format dollar value compactly.
+
+    None means the filing carried no transaction price. It renders as a label,
+    never as $0 (reads as a real, wrong data point), never blank (reads as an
+    oversight), never the literal None/null (reads as a bug). Ruled: spec §4,
+    PM 2026-08-05.
+    """
+    if val is None:
+        return PRICE_UNKNOWN_LABEL
     if val >= 1_000_000:
         return f"${val / 1e6:.2f}M"
     return f"${val:,.0f}"
