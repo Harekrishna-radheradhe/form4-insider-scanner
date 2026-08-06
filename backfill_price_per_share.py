@@ -62,6 +62,37 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
+
+# The interpreter floor, matching the README's stated "Python 3.8+". The Studio
+# venv is 3.9.6 and PA's exact version is not recorded anywhere in this repo, so
+# the tool states its own requirement rather than assuming the host's.
+MIN_PYTHON = (3, 8)
+
+
+def require_python(version_info=None) -> None:
+    """Refuse to run on an interpreter older than the floor, in plain words.
+
+    Exists because the first cut of this module annotated `float | None` — PEP
+    604, 3.10+ — and died at import under the scanner's own 3.9 venv with
+    `TypeError: unsupported operand type(s) for |: 'type' and 'NoneType'`. That
+    message tells an operator running a remediation on a live database nothing
+    useful. Annotations are now `Optional[...]`, and this guard is here so that
+    a genuinely too-old interpreter produces a sentence naming both versions
+    instead of a traceback about a union operator.
+    """
+    v = tuple(version_info or sys.version_info)[:3]
+    if v < MIN_PYTHON:
+        have = ".".join(str(p) for p in v)
+        need = ".".join(str(p) for p in MIN_PYTHON)
+        raise RuntimeError(
+            f"backfill_price_per_share needs Python {need} or newer; this "
+            f"interpreter is {have}. Run it with the scanner venv "
+            f"(.venv/bin/python) or a newer interpreter — do NOT edit the "
+            f"annotations to make it import.")
+
+
+require_python()
 
 # --- resolution actions
 SET_UNKNOWN = "SET_UNKNOWN"     # source carries no numeric price -> NULL/NULL
@@ -84,8 +115,12 @@ AND price_per_share = 0.0
 @dataclass(frozen=True)
 class Resolution:
     action: str
-    price: float | None
-    total_value: float | None
+    # `Optional[float]`, not `float | None`: PEP 604 unions are 3.10+, and this
+    # module has to run under the scanner's interpreter (3.9.6 on the Studio,
+    # README floor 3.8). The union form raised TypeError at import on 3.9 —
+    # found in review after the suite was first run under a 3.12 venv.
+    price: Optional[float]
+    total_value: Optional[float]
     reason: str
 
 

@@ -26,9 +26,9 @@ import sqlite3
 import pytest
 
 from backfill_price_per_share import (
-    AMBIGUOUS, LEAVE, SET_PRICE, SET_UNKNOWN, UNMATCHED,
+    AMBIGUOUS, LEAVE, SET_PRICE, SET_UNKNOWN, UNMATCHED, MIN_PYTHON,
     find_code_p_zero_rows, resolve_row, source_transactions, write_rollback,
-    apply_resolutions,
+    apply_resolutions, require_python,
 )
 
 
@@ -308,3 +308,38 @@ def test_apply_leaves_a_known_zero_untouched(tmp_path):
     n = apply_resolutions(p, [(rows[0], Resolution(LEAVE, None, None, "explicit 0"))],
                           rollback_record=rec)
     assert n == 0
+
+
+# ── interpreter floor: fail loudly, never with a TypeError ───────
+# Found in review: the first cut annotated `float | None` (PEP 604, 3.10+) and
+# raised `TypeError: unsupported operand type(s) for |` at import under the
+# scanner's own 3.9.6 venv. The 76-green had been run under a 3.12 interpreter,
+# so the suite never saw it. Annotations are now `Optional[...]`; this guard
+# exists so that if the module is ever run somewhere older than its floor, the
+# operator gets a sentence they can act on instead of a traceback about `|`.
+
+def test_the_supported_floor_matches_the_repo_readme():
+    """README says "Python 3.8+"; the tool must not silently demand more."""
+    assert MIN_PYTHON == (3, 8)
+
+
+def test_a_supported_interpreter_passes_quietly():
+    for v in ((3, 8, 0), (3, 9, 6), (3, 12, 13)):
+        require_python(v)          # must not raise
+
+
+def test_an_unsupported_interpreter_fails_with_a_plain_message():
+    with pytest.raises(RuntimeError) as e:
+        require_python((3, 7, 17))
+    msg = str(e.value)
+    assert "3.7.17" in msg          # what you have
+    assert "3.8" in msg             # what is needed
+    assert "|" not in msg           # never a TypeError about union syntax
+
+
+def test_the_module_imports_under_the_running_interpreter():
+    """The regression itself: importing the module must not raise on 3.9."""
+    import importlib
+    import backfill_price_per_share as m
+    importlib.reload(m)
+    assert m.Resolution(SET_UNKNOWN, None, None, "x").price is None
