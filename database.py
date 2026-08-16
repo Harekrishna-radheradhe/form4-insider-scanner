@@ -30,6 +30,7 @@ def initialize_database():
             total_value REAL,
             acquired_disposed TEXT,
             shares_owned_after REAL,
+            is_10b5_1 INTEGER,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     ''')
@@ -67,15 +68,16 @@ def insert_transaction(t):
                 insider_cik, insider_name, insider_title,
                 is_director, is_officer, is_ten_percent_owner,
                 transaction_date, transaction_code, shares_amount,
-                price_per_share, total_value, acquired_disposed, shares_owned_after
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                price_per_share, total_value, acquired_disposed, shares_owned_after,
+                is_10b5_1
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ''', (t.get('accession_number'), t.get('filing_date'), t.get('accepted_datetime'),
               t.get('issuer_cik'), t.get('issuer_name'), t.get('issuer_ticker'),
               t.get('insider_cik'), t.get('insider_name'), t.get('insider_title'),
               t.get('is_director',0), t.get('is_officer',0), t.get('is_ten_percent_owner',0),
               t.get('transaction_date'), t.get('transaction_code'), t.get('shares_amount'),
               t.get('price_per_share'), t.get('total_value'), t.get('acquired_disposed'),
-              t.get('shares_owned_after')))
+              t.get('shares_owned_after'), t.get('is_10b5_1')))
         conn.commit()
         return True
     except sqlite3.IntegrityError:

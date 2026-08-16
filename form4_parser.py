@@ -37,17 +37,47 @@ class Form4Parser:
         transactions = []
         issuer_info = self._extract_issuer_info(root)
         owner_info = self._extract_owner_info(root)
+        plan_info = self._extract_10b5_1(root)
         non_derivative_txns = self._extract_non_derivative_transactions(root)
         for txn in non_derivative_txns:
             transaction = {
                 'accession_number': accession_number,
                 'filing_date': filing_date,
                 'accepted_datetime': accepted_datetime,
-                **issuer_info, **owner_info, **txn
+                **issuer_info, **owner_info, **plan_info, **txn
             }
             transactions.append(transaction)
         return transactions
-    
+
+    def _extract_10b5_1(self, root):
+        """Capture the Rule 10b5-1(c) trading-plan checkbox.
+
+        `<aff10b5One>` is a DOCUMENT-level element — a sibling of
+        <reportingOwner> and <nonDerivativeTable>, not a child of the
+        transaction elements — so it is invisible to a walk that only
+        descends into <nonDerivativeTable>.
+
+        ABSENT MEANS UNKNOWN, NOT FALSE. The checkbox only exists on
+        filings made on or after 2023-04-01; before that no filer could
+        state a plan either way. Writing 0 for an absent element would
+        make "this filer said no" and "nobody could say" the same value —
+        the identical mistake that price_per_share=0.0 made for an absent
+        price, and it is corrected here for the same reason.
+
+        Both encodings occur in the wild: the XML emits 0/1, and SEC's own
+        quarterly SUBMISSION.tsv carries 0/1 AND false/true in one column.
+        """
+        el = root.find('.//aff10b5One')
+        if el is None or el.text is None or not el.text.strip():
+            return {'is_10b5_1': None}
+        v = el.text.strip().lower()
+        if v in ('1', 'true', 'yes'):
+            return {'is_10b5_1': 1}
+        if v in ('0', 'false', 'no'):
+            return {'is_10b5_1': 0}
+        return {'is_10b5_1': None}
+
+
     def _extract_issuer_info(self, root):
         issuer = root.find('.//issuer')
         if issuer is None:
