@@ -356,14 +356,23 @@ def send_status_report(filings_processed, transactions_added, clusters_found,
     }
 
     if dry_run:
+        _fp = 'not fetched this run' if filings_processed is None else filings_processed
+        _ta = 'not fetched this run' if transactions_added is None else transactions_added
         print(f"[DRY RUN] Would send daily status email")
-        print(f"  Filings processed: {filings_processed}")
-        print(f"  Transactions added: {transactions_added}")
+        print(f"  Filings processed: {_fp}")
+        print(f"  Transactions added: {_ta}")
         print(f"  Buying clusters found: {status_data['clusters_found']}")
         print(f"  Sell signals found: {status_data['sells_found']}")
         return True
     else:
-        return reporter.send_status_report(stats)
+        # The per-cycle counters travel WITH the running totals. `stats` alone
+        # is what let 2026-08-17 look like a normal night: a zero-insert cycle
+        # and a healthy one print the same totals.
+        return reporter.send_status_report(
+            stats,
+            rows_added=transactions_added,
+            filings_processed=filings_processed,
+        )
 
 
 def main():
@@ -399,8 +408,11 @@ def main():
     print(f"  Options contamination filter: "
           f"{'ENABLED' if OPTIONS_CHECK_AVAILABLE else 'DISABLED'}")
 
-    filings_processed = 0
-    transactions_added = 0
+    # None, not 0: analyze-only and status-only never call the fetch, so their
+    # delta is UNKNOWN. Initialising to 0 would make every such run look like a
+    # zero-insert weekday cycle and fire the alarm nightly until it was ignored.
+    filings_processed = None
+    transactions_added = None
     clusters = []
     sells = []
     buy_alerts_sent = 0

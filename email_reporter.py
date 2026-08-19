@@ -10,7 +10,7 @@ import re
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from config import EMAIL_CONFIG
 try:
     import yfinance as yf
@@ -52,6 +52,36 @@ def _add_trading_days_dt(ref_dt, n):
         if dt.weekday() < 5:
             added += 1
     return dt
+
+
+def _is_scanner_weekday(dt):
+    """True Mon-Fri, by the same UTC rule `main.main()` uses to skip weekends.
+
+    Restated here rather than imported from `main` deliberately: `main` returns
+    before the email path ever runs on Sat/Sun, so an alarm that leaned on that
+    early return would be untested on exactly the branch that decides whether it
+    is a false positive. The alarm has to be correct on its own terms.
+    """
+    return dt.weekday() < 5
+
+
+def _zero_insert_alarm(rows_added, run_dt):
+    """Did a cycle that SHOULD have ingested rows ingest none?
+
+    Three cases, and only one of them is a fault:
+      - `rows_added is None` — the fetch never ran (`--status-only`,
+        `--analyze-only`). Unknown is not zero, and alarming on it would be a
+        vacuous alarm (constitution A6).
+      - zero on a weekend — the designed outcome. EDGAR publishes no new Form 4s
+        on Sat/Sun, so a flag here would fire ~104 times a year and train the
+        reader to ignore it, which is how this alarm would become the next
+        invisible-failure mode instead of the cure for it.
+      - zero on a weekday — the 2026-08-17 shape. The scanner ran, the totals
+        looked normal, and nothing was ingested. This is the one that fires.
+    """
+    if rows_added is None:
+        return False
+    return rows_added == 0 and _is_scanner_weekday(run_dt)
 
 
 def _fetch_vix():
@@ -167,14 +197,30 @@ class EmailReporter:
         return self._send_email(subject, html_content, text_content)
 
     # ============================================================
-    #  STATUS REPORT (unchanged)
+    #  STATUS REPORT
     # ============================================================
 
-    def send_status_report(self, stats, message="", dry_run=False):
-        subject = (f"Form 4 Scanner Status - "
+    def send_status_report(self, stats, message="", dry_run=False,
+                           rows_added=None, filings_processed=None):
+        """Daily heartbeat status email.
+
+        `stats` are RUNNING TOTALS. `rows_added` is what THIS cycle inserted —
+        `main.fetch_and_store_filings()`'s own `transactions_added` return
+        value, reused rather than re-derived from a fresh query. Pass `None`
+        when the fetch did not run, so an un-run fetch is never rendered or
+        alarmed on as a zero.
+        """
+        run_dt = datetime.now(timezone.utc)
+        alarm = _zero_insert_alarm(rows_added, run_dt)
+        subject = (f"{'[ZERO-INSERT] ' if alarm else ''}"
+                   f"Form 4 Scanner Status - "
                    f"{datetime.now().strftime('%Y-%m-%d')}")
-        html_content = self._build_status_html(stats, message)
-        text_content = self._build_status_text(stats, message)
+        html_content = self._build_status_html(
+            stats, message, rows_added=rows_added,
+            filings_processed=filings_processed, alarm=alarm)
+        text_content = self._build_status_text(
+            stats, message, rows_added=rows_added,
+            filings_processed=filings_processed, alarm=alarm)
         if dry_run:
             print(f"DRY RUN - Subject: {subject}")
             return True
@@ -592,15 +638,41 @@ class EmailReporter:
         return "\n".join(lines)
 
     # ────────────────────────────────────────────────────────────
-    #  STATUS REPORT (unchanged)
+    #  STATUS REPORT
     # ────────────────────────────────────────────────────────────
 
-    def _build_status_html(self, stats, message=""):
+    def _build_status_html(self, stats, message="", rows_added=None,
+                           filings_processed=None, alarm=False):
         now = datetime.now()
         total_txns = stats.get('total_transactions', 0)
         purchases = stats.get('total_purchases', 0)
         sells = stats.get('total_sells', 0)
         unique_tickers = stats.get('unique_companies', 0)
+
+        # The delta box is omitted entirely when the fetch did not run — an
+        # absent box says "unknown", a box reading 0 would say "none added".
+        delta_box = ''
+        if rows_added is not None:
+            delta_color = '#c53030' if alarm else '#1a365d'
+            delta_box = (
+                f'<div class="stat-box" style="border:2px solid {delta_color}">'
+                f'<div class="number" style="color:{delta_color}">'
+                f'{rows_added}</div>'
+                f'<div class="label">Rows Added This Cycle</div>'
+                f'</div>')
+
+        alarm_banner = ''
+        if alarm:
+            alarm_banner = (
+                '<div style="background:#c53030;color:white;padding:18px 20px;'
+                'text-align:center;font-size:16px;font-weight:bold;'
+                'letter-spacing:0.5px">'
+                'ZERO INSERTS ON A WEEKDAY CYCLE'
+                '<div style="font-weight:normal;font-size:13px;margin-top:6px;'
+                'opacity:0.95">The scanner ran and added no rows on a day it '
+                'should have. The totals below are unchanged from the previous '
+                'cycle &mdash; they are not evidence the run was healthy.</div>'
+                '</div>')
 
         html = f'''
         <!DOCTYPE html>
@@ -633,6 +705,7 @@ class EmailReporter:
                 <h1>&#128203; Form 4 Scanner Status</h1>
                 <p>{now.strftime('%A, %B %d, %Y')}</p>
             </div>
+            {alarm_banner}
 
             <div class="content">
                 <div class="summary-grid">
@@ -652,6 +725,7 @@ class EmailReporter:
                         <div class="number">{unique_tickers}</div>
                         <div class="label">Unique Companies</div>
                     </div>
+                    {delta_box}
                 </div>
         '''
 
@@ -681,17 +755,38 @@ class EmailReporter:
         '''
         return html
 
-    def _build_status_text(self, stats, message=""):
+    def _build_status_text(self, stats, message="", rows_added=None,
+                           filings_processed=None, alarm=False):
         lines = [
             "FORM 4 SCANNER STATUS",
             "=" * 40,
             f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
             "",
+        ]
+        if alarm:
+            lines.extend([
+                "*" * 52,
+                "** ZERO INSERTS ON A WEEKDAY CYCLE",
+                "** The scanner ran and added no rows on a day it should have.",
+                "** The totals below are unchanged from the previous cycle -",
+                "** they are not evidence the run was healthy.",
+                "*" * 52,
+                "",
+            ])
+        lines.extend([
             f"Total Transactions: {stats.get('total_transactions', 0):,}",
             f"Purchases: {stats.get('total_purchases', 0)}",
             f"Sells: {stats.get('total_sells', 0)}",
             f"Unique Companies: {stats.get('unique_companies', 0)}",
-        ]
+        ])
+        # Omitted entirely when the fetch did not run: no line at all says
+        # "unknown", a line reading 0 would say "none added".
+        if rows_added is not None:
+            lines.append("")
+            lines.append(f"Rows Added This Cycle: {rows_added}")
+            if filings_processed is not None:
+                lines.append(
+                    f"Filings Processed This Cycle: {filings_processed}")
         if message:
             lines.extend(["", message])
         return "\n".join(lines)
