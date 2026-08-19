@@ -101,6 +101,73 @@ def is_filing_processed(accession):
     conn.close()
     return result
 
+def _accession_variants(accession):
+    """Both spellings of an accession, because the DB carries both.
+
+    The nightly scanner discovers via the EDGAR atom feed, whose link path yields
+    the UNDASHED form (`000161071726000359`), and stores that. The daily index
+    used by the date-scoped backfill yields the dashed canonical form
+    (`0001610717-26-000359`). A guard that checked only its own spelling would
+    miss every filing the other path had already stored.
+    """
+    if not accession:
+        return []
+    text = str(accession)
+    undashed = text.replace('-', '')
+    variants = [text]
+    if undashed != text:
+        variants.append(undashed)
+    if len(undashed) == 18:
+        dashed = f"{undashed[:10]}-{undashed[10:12]}-{undashed[12:]}"
+        if dashed not in variants:
+            variants.append(dashed)
+    return variants
+
+
+def accession_has_transactions(accession):
+    """True if any transaction row already exists for this accession.
+
+    Closes the window `processed_filings` cannot. `mark_filing_processed` runs
+    AFTER the inserts, so a run that died in between leaves rows present and the
+    filing unmarked — and `form4_transactions` has NO unique constraint (the
+    `except sqlite3.IntegrityError` in `insert_transaction` can never fire), so a
+    resumed backfill would duplicate exactly those rows. Read-only; adds no
+    constraint to a live database that may legitimately hold repeated rows.
+    """
+    variants = _accession_variants(accession)
+    if not variants:
+        return False
+    conn = get_connection()
+    cursor = conn.cursor()
+    placeholders = ','.join('?' * len(variants))
+    cursor.execute(
+        f'SELECT 1 FROM form4_transactions '
+        f'WHERE accession_number IN ({placeholders}) LIMIT 1', variants)
+    result = cursor.fetchone() is not None
+    conn.close()
+    return result
+
+
+def filing_processed_any_spelling(accession):
+    """`is_filing_processed`, tolerant of either accession spelling.
+
+    Deliberately a separate function: `is_filing_processed` is on the nightly
+    scanner's hot path and is left byte-identical.
+    """
+    variants = _accession_variants(accession)
+    if not variants:
+        return False
+    conn = get_connection()
+    cursor = conn.cursor()
+    placeholders = ','.join('?' * len(variants))
+    cursor.execute(
+        f'SELECT 1 FROM processed_filings '
+        f'WHERE accession_number IN ({placeholders}) LIMIT 1', variants)
+    result = cursor.fetchone() is not None
+    conn.close()
+    return result
+
+
 def get_recent_purchases(ticker, days=14):
     conn = get_connection()
     cursor = conn.cursor()

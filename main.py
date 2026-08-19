@@ -21,8 +21,12 @@ Usage:
     python main.py --fetch-only   # Only fetch, no analysis
     python main.py --analyze-only # Only analyze existing data
     python main.py --status-only  # Just send status email
+
+    python main.py --backfill-date 2026-08-17 --dry-run   # discover+parse, no writes
+    python main.py --backfill-date 2026-08-17             # backfill that day (MANUAL)
 """
 
+import json
 import sys
 import os
 from datetime import datetime, timezone
@@ -34,6 +38,8 @@ from database import (
     insert_transaction,
     mark_filing_processed,
     is_filing_processed,
+    accession_has_transactions,
+    filing_processed_any_spelling,
     get_cluster_candidates,
     get_recent_purchases,
     was_alert_sent,
@@ -171,6 +177,211 @@ def fetch_and_store_filings():
 
     print(f"Processed {filings_processed} new filings, added {transactions_added} transactions, {errors} errors")
     return filings_processed, transactions_added, errors, source_status, n_evaluated
+
+
+# ============================================================
+#  DATE-SCOPED BACKFILL  (JOB-20260819-FORM4-BACKFILL-SCRIPT)
+# ============================================================
+#
+# Closes a one-day collection hole using the SAME guarded per-filing path the
+# nightly scan uses. Only discovery is new: `get_filings_for_date` reads EDGAR's
+# daily index instead of the rolling `getcurrent` feed, which has no date
+# parameter and so can never reach a historical day.
+#
+# Manual operation. Never scheduled, never triggered by the nightly run, and it
+# sends no email and runs no analysis — a backfill's row count is not a scanner
+# cycle's row count and must not be reported as one.
+
+
+def _load_checkpoint(path):
+    """Accessions already completed by an earlier run of this backfill."""
+    if not path or not os.path.exists(path):
+        return []
+    try:
+        with open(path) as fh:
+            return list(json.load(fh).get('completed', []))
+    except (ValueError, OSError) as err:
+        print(f"[CHECKPOINT_UNREADABLE] {path}: {type(err).__name__}: {err} — "
+              f"treating as empty; the DB guards still prevent double-inserts",
+              flush=True)
+        return []
+
+
+def _save_checkpoint(path, date_str, completed):
+    if not path:
+        return
+    try:
+        with open(path, 'w') as fh:
+            json.dump({'date': date_str, 'completed': sorted(completed)}, fh)
+    except OSError as err:
+        print(f"[CHECKPOINT_WRITE_FAIL] {path}: {type(err).__name__}: {err}",
+              flush=True)
+
+
+def backfill_one_filing(fetcher, parser, filing, dry_run=False):
+    """Backfill exactly one discovered filing. Returns an outcome dict.
+
+    Two idempotency guards, in order, because they close different holes:
+      1. `filing_processed_any_spelling` — the filing completed on an earlier
+         run and is recorded in `processed_filings`.
+      2. `accession_has_transactions` — rows are present but the filing was
+         never marked, i.e. a run died between its inserts and its
+         `mark_filing_processed`. Nothing else catches this, and
+         `form4_transactions` has no unique constraint to fall back on.
+
+    Everything after the guards is the existing guarded path, unchanged:
+    `fetch_form4_xml` (which resolves the document through the filing's own
+    `index.json`, never a constructed path) -> `fetch_acceptance_datetime` ->
+    `parse` -> `insert_transaction`.
+    """
+    accession = filing.get('accession_number')
+    base = {'accession': accession, 'rows_inserted': 0}
+
+    if filing_processed_any_spelling(accession):
+        return dict(base, outcome='skipped_already_processed')
+    if accession_has_transactions(accession):
+        return dict(base, outcome='skipped_rows_present')
+
+    ciks = [c for c in (filing.get('ciks') or [filing.get('cik')]) if c]
+    if not ciks:
+        return dict(base, outcome='failed', reason='no filer CIK in index row')
+
+    xml_content = None
+    used_cik = None
+    for cik in ciks:
+        xml_content = fetcher.fetch_form4_xml(cik, accession)
+        if xml_content:
+            used_cik = cik
+            break
+    if not xml_content:
+        return dict(base, outcome='failed',
+                    reason=f'no Form 4 XML under any of {len(ciks)} filer CIK(s)')
+
+    # Same rule as the nightly path: a filing whose acceptance time cannot be
+    # established is skipped, never ingested with an invented timestamp.
+    accepted_datetime = fetcher.fetch_acceptance_datetime(used_cik, accession)
+    if not accepted_datetime:
+        return dict(base, outcome='failed',
+                    reason='no EDGAR acceptance datetime')
+
+    filing_date = (filing.get('updated') or '')[:10] or None
+    try:
+        transactions = parser.parse(xml_content, accession, filing_date,
+                                    accepted_datetime)
+    except Exception as err:
+        return dict(base, outcome='failed',
+                    reason=f'parse failed: {type(err).__name__}: {err}')
+
+    if dry_run:
+        return dict(base, outcome='would_insert', rows_parsed=len(transactions))
+
+    rows = 0
+    for txn in transactions:
+        if insert_transaction(txn):
+            rows += 1
+    mark_filing_processed(accession, 'success')
+    return dict(base, outcome='inserted', rows_inserted=rows,
+                rows_parsed=len(transactions))
+
+
+def backfill_date(date_str, dry_run=False, form_type='4', checkpoint_path=None):
+    """Backfill every filing of `form_type` EDGAR published on `date_str`.
+
+    Reconciles unprompted: discovered == inserted + skipped + failed, exactly.
+    Any unexplained gap sets `reconciled` False and is reported as a STOP rather
+    than a footnote, and every failure carries its reason.
+    """
+    fetcher = EdgarFetcher()
+    parser = Form4Parser()
+
+    print("#" * 60)
+    print(f"# FORM 4 DATE-SCOPED BACKFILL — {date_str} — form type {form_type}")
+    print(f"# {'DRY RUN — nothing will be written' if dry_run else 'LIVE — rows will be inserted'}")
+    print("#" * 60)
+
+    filings = fetcher.get_filings_for_date(date_str, form_type=form_type)
+    print(f"Discovered {len(filings)} distinct {form_type} accessions in "
+          f"EDGAR's daily index for {date_str}")
+
+    completed = set(_load_checkpoint(checkpoint_path))
+    if completed:
+        print(f"Checkpoint: {len(completed)} already completed by an earlier run")
+
+    results = []
+    for i, filing in enumerate(filings, 1):
+        accession = filing.get('accession_number')
+        if accession in completed:
+            results.append({'accession': accession, 'rows_inserted': 0,
+                            'outcome': 'skipped_checkpoint'})
+            continue
+
+        outcome = backfill_one_filing(fetcher, parser, filing, dry_run=dry_run)
+        results.append(outcome)
+
+        if outcome['outcome'] in ('inserted', 'would_insert'):
+            completed.add(accession)
+            if not dry_run:
+                _save_checkpoint(checkpoint_path, date_str, completed)
+        if i % 50 == 0 or i == len(filings):
+            print(f"  {i}/{len(filings)} filings processed", flush=True)
+
+    def _count(*names):
+        return sum(1 for r in results if r['outcome'] in names)
+
+    inserted = _count('inserted', 'would_insert')
+    skipped = _count('skipped_already_processed', 'skipped_rows_present',
+                     'skipped_checkpoint')
+    failed = _count('failed')
+    failures = [{'accession': r['accession'], 'reason': r.get('reason', '')}
+                for r in results if r['outcome'] == 'failed']
+
+    summary = {
+        'date': date_str,
+        'form_type': form_type,
+        'dry_run': dry_run,
+        'discovered': len(filings),
+        'inserted_filings': inserted,
+        'skipped': skipped,
+        'failed': failed,
+        'inserted_rows': sum(r.get('rows_inserted', 0) for r in results),
+        'would_insert_rows': sum(r.get('rows_parsed', 0) for r in results
+                                 if r['outcome'] == 'would_insert'),
+        'failures': failures,
+        'reconciled': len(filings) == inserted + skipped + failed,
+    }
+
+    print("\n" + "=" * 60)
+    print(f"BACKFILL RECONCILIATION — {date_str} (form type {form_type})")
+    print("=" * 60)
+    print(f"  accessions found in daily index : {summary['discovered']}")
+    print(f"  {'would insert' if dry_run else 'inserted'} (filings)        : {inserted}")
+    print(f"  {'would insert' if dry_run else 'inserted'} (rows)           : "
+          f"{summary['would_insert_rows'] if dry_run else summary['inserted_rows']}")
+    print(f"  skipped (already present)       : {skipped}")
+    print(f"  failed                          : {failed}")
+    for f in failures:
+        print(f"      FAILED {f['accession']}: {f['reason']}")
+    print(f"  found == inserted+skipped+failed : "
+          f"{summary['discovered']} == {inserted}+{skipped}+{failed} -> "
+          f"{'RECONCILED' if summary['reconciled'] else '*** MISMATCH — STOP ***'}")
+    if not summary['reconciled']:
+        print("  *** Reconciliation FAILED. Do not treat this run as complete. ***")
+    print("=" * 60)
+    return summary
+
+
+def _arg_value(flag, argv=None):
+    """Value following `flag` in argv, or None. Missing value is fatal, not
+    silently ignored — `--backfill-date` with no date must never fall through
+    into a normal scan."""
+    argv = sys.argv if argv is None else argv
+    if flag not in argv:
+        return None
+    idx = argv.index(flag)
+    if idx + 1 >= len(argv) or argv[idx + 1].startswith('--'):
+        raise SystemExit(f"{flag} requires a date argument, e.g. "
+                         f"{flag} 2026-08-17")
+    return argv[idx + 1]
 
 
 # ============================================================
@@ -376,6 +587,15 @@ def send_status_report(filings_processed, transactions_added, clusters_found,
 
 
 def main():
+    # Backfill mode is a MANUAL data operation, handled before anything else:
+    # it deliberately bypasses the weekday guard below (the PM must be able to
+    # close a gap on a Saturday), and it sends no email and runs no analysis.
+    backfill_target = _arg_value('--backfill-date')
+    if backfill_target:
+        initialize_database()
+        backfill_date(backfill_target, dry_run='--dry-run' in sys.argv)
+        return
+
     # Skip weekends - markets closed
     if datetime.now(timezone.utc).weekday() >= 5:  # 5=Saturday, 6=Sunday
         print("Weekend - skipping scan")
