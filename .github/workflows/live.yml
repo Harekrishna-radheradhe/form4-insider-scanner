@@ -1,0 +1,93 @@
+name: Daily live insider report
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/live.yml'
+      - 'research_scan.py'
+      - 'edgar_fetcher.py'
+      - 'form4_parser.py'
+      - 'requirements*.txt'
+  schedule:
+    - cron: '17 13 * * *'
+  workflow_dispatch:
+concurrency:
+  group: live-form4-report
+  cancel-in-progress: false
+permissions:
+  contents: write
+jobs:
+  live-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 50
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: python -m pip install -r requirements-research.txt
+      - run: cp config_example.py config.py
+      - name: Set SEC contact header
+        env:
+          CONFIGURED_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          REPOSITORY: ${{ github.repository }}
+        shell: python
+        run: |
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+          user_agent = os.environ.get('CONFIGURED_USER_AGENT', '').strip()
+          if not user_agent:
+              emails = subprocess.check_output(['git', 'log', '-50', '--format=%ae'], text=True).splitlines()
+              contact = next((email for email in emails
+                              if re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', email)
+                              and 'noreply' not in email.lower()), None)
+              if not contact:
+                  raise SystemExit('Set the SEC_USER_AGENT repository Actions secret to your name and contact email.')
+              user_agent = f"{os.environ['REPOSITORY']} {contact}"
+          if '\n' in user_agent or '\r' in user_agent:
+              raise SystemExit('SEC_USER_AGENT must be a single line.')
+          print('::add-mask::' + user_agent)
+          with Path(os.environ['GITHUB_ENV']).open('a') as environment:
+              environment.write('SEC_USER_AGENT=' + user_agent + '\n')
+          print('SEC contact header configured. Existing public commit contact is used when no secret is set.')
+      - name: Restore collected filings
+        uses: actions/cache/restore@v6
+        with:
+          path: research_filings.db
+          key: form4-live-v2-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: form4-live-v2-
+      - name: Collect real SEC filings and generate report
+        run: python research_scan.py --output reports/latest
+      - name: Preserve collected filings
+        if: always() && hashFiles('research_filings.db') != ''
+        uses: actions/cache/save@v6
+        with:
+          path: research_filings.db
+          key: form4-live-v2-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Publish readable report in repository
+        if: always() && hashFiles('reports/latest/report.md') != ''
+        shell: bash
+        run: |
+          cp reports/latest/report.md LIVE_REPORT.md
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add LIVE_REPORT.md reports/latest/report.md reports/latest/report.html reports/latest/report.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'Update live SEC insider purchase report'
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+      - name: Save downloadable live report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: live-form4-report
+          path: reports/latest/
+          if-no-files-found: warn
+          retention-days: 30

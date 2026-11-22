@@ -1,8 +1,25 @@
 # Nikhil's Form 4 Research Fork
 
-This fork adds a research workflow for three distinct officers or directors buying
-common shares within seven calendar dates. Review each candidate's original SEC
-filing and footnotes before making an investment decision.
+**[Open the latest live report](LIVE_REPORT.md)**
+
+The report updates daily from real SEC filings. Open the link above to see company
+names, insider buyers, purchase values and original filings directly on GitHub.
+Check its filing date and collection status before using the results.
+
+The **Daily live insider report** workflow runs at 13:17 UTC, approximately 5:17 AM
+Pacific standard time or 6:17 AM Pacific daylight time. It can also be run manually
+from Actions. Weekends and observed federal holidays reuse the latest completed
+filing day. GitHub can delay scheduled jobs.
+
+Filing data is cached between runs. If the cache expires, the next run rebuilds the
+seven-day window. Each run saves readable Markdown, HTML and JSON reports, with
+collection failures clearly marked. The SEC contact header uses the optional
+`SEC_USER_AGENT` Actions secret, or an existing publicly recorded human commit email.
+The contact value is masked in Actions logs. No credentials or contact address are
+added to the report files.
+
+The separate **Research checks and report** workflow runs software tests and an
+explicitly fictional demo. Use **Daily live insider report** for real results.
 
 ## Run the research report
 
@@ -23,14 +40,8 @@ same evidence and collection status. The demo uses explicitly fictional purchase
 The live command reads complete daily indexes, including amendments, for completed
 US Eastern filing days. It caches complete filings atomically in
 `research_filings.db`. Repeated runs reuse that cache. Errors produce a partial
-report and a failing exit code. Unavailable holiday indexes also remain visible as
+report and a failing exit code. Observed federal holidays are skipped. Other unavailable indexes remain visible as
 collection errors. Use at least a seven-day collection range for the seven-day rule.
-
-A manual GitHub Actions workflow named **Research checks and report** can run the
-checks and demo without local installation. For its live mode, configure the
-repository Actions secret `SEC_USER_AGENT`. Reports are downloadable as workflow
-artifacts. Each Actions run starts a fresh collection. Automatic daily scheduling
-and persistent hosted storage require additional setup.
 
 ## Candidate rules and limitations
 
