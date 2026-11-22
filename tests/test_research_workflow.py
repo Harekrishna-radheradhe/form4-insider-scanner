@@ -97,3 +97,43 @@ def test_sec_xml_date_timezone_suffix_is_supported():
     clusters = find_clusters(filings, date(2026, 11, 20))
     assert clusters[0]['buyers'] == 3
     assert clusters[0]['purchases'][0]['transaction_date'] == '2026-11-18'
+
+
+def test_edgar_holidays_and_weekends():
+    from research_scan import filing_days, latest_completed_filing_day
+    assert filing_days(date(2026, 11, 7), date(2026, 11, 12)) == [
+        date(2026, 11, 9), date(2026, 11, 10), date(2026, 11, 12)]
+    assert latest_completed_filing_day(date(2026, 11, 22)) == date(2026, 11, 20)
+    assert latest_completed_filing_day(date(2026, 11, 27)) == date(2026, 11, 25)
+
+
+def test_combined_index_includes_amendments(monkeypatch):
+    from pathlib import Path
+    from edgar_fetcher import EdgarFetcher
+    fixture = Path(__file__).parent / 'fixtures/form.20260817.sample.idx'
+    response = types.SimpleNamespace(text=fixture.read_text())
+    fetcher = EdgarFetcher()
+    monkeypatch.setattr(fetcher, '_make_request', lambda url: response)
+    filings = fetcher.get_filings_for_date('2026-08-17', form_type=None)
+    assert len(filings) == 3
+    assert {filing['form_type'] for filing in filings} == {'4', '4/A'}
+
+
+def test_complete_submission_carries_xml_and_sec_acceptance(monkeypatch):
+    from edgar_fetcher import EdgarFetcher
+    fetcher = EdgarFetcher()
+    response = types.SimpleNamespace(text='<ACCEPTANCE-DATETIME>20261120171230\n<XML><ownershipDocument><documentType>4</documentType></ownershipDocument></XML>')
+    monkeypatch.setattr(fetcher, '_make_request', lambda url: response)
+    xml, accepted = fetcher.fetch_ownership_submission('https://www.sec.gov/Archives/example.txt')
+    assert xml.startswith('<ownershipDocument>')
+    assert accepted == '2026-11-20T17:12:30-05:00'
+
+
+def test_live_markdown_has_evidence_and_no_demo(tmp_path):
+    filings = [[purchase(str(i), filing_url='https://www.sec.gov/Archives/test.txt')] for i in range(1, 4)]
+    write_report(tmp_path, find_clusters(filings, date(2026, 11, 20)),
+                 {'as_of': '2026-11-20', 'errors': [], 'stored_filings': 3})
+    report = (tmp_path / 'report.md').read_text()
+    assert '[SEC filing](https://www.sec.gov/Archives/test.txt)' in report
+    assert 'DEMO' not in report
+    assert '3 buyers' in report

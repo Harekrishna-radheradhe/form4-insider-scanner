@@ -4,6 +4,7 @@ SEC EDGAR Form 4 Filing Fetcher
 import re
 import requests
 import time
+import threading
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -45,6 +46,9 @@ def daily_index_url(date_str):
     )
 
 class EdgarFetcher:
+    _request_lock = threading.Lock()
+    _last_global_request = 0.0
+
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
@@ -54,11 +58,15 @@ class EdgarFetcher:
         self.last_request_time = 0
     
     def _rate_limit(self):
-        elapsed = time.time() - self.last_request_time
-        if elapsed < EDGAR_CONFIG['request_delay']:
-            time.sleep(EDGAR_CONFIG['request_delay'] - elapsed)
-        self.last_request_time = time.time()
-    
+        # A shared limiter keeps concurrent collectors under SEC's rate limit.
+        with EdgarFetcher._request_lock:
+            elapsed = time.monotonic() - EdgarFetcher._last_global_request
+            delay = max(EDGAR_CONFIG['request_delay'], 0.2)
+            if elapsed < delay:
+                time.sleep(delay - elapsed)
+            EdgarFetcher._last_global_request = time.monotonic()
+            self.last_request_time = time.time()
+
     def _make_request(self, url):
         self._rate_limit()
         try:
@@ -69,6 +77,18 @@ class EdgarFetcher:
             print(f"Request error for {url}: {e}")
             return None
     
+    def fetch_ownership_submission(self, url):
+        """Read ownership XML and acceptance time from one published submission."""
+        response = self._make_request(url)
+        if response is None:
+            raise RuntimeError(f'Could not fetch SEC submission: {url}')
+        accepted = _ACCEPTANCE_RE.search(response.text)
+        ownership = re.search(r'<ownershipDocument\b.*?</ownershipDocument>', response.text, re.S)
+        if accepted is None or ownership is None:
+            raise ValueError('Complete SEC submission lacks ownership XML or acceptance time')
+        timestamp = datetime.strptime(accepted.group(1), '%Y%m%d%H%M%S')
+        return ownership.group(0), timestamp.replace(tzinfo=_EDGAR_TZ).isoformat()
+
     def get_recent_form4_filings(self, count=100):
         url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=4&company=&dateb=&owner=only&count={count}&output=atom"
         response = self._make_request(url)
@@ -178,21 +198,22 @@ class EdgarFetcher:
                 row_form = line.split()[0]
                 company = ''
                 file_match = _IDX_FILE_RE.search(line)
-            if row_form != form_type or not file_match:
+            requested_forms = {'4', '4/A'} if form_type is None else {form_type}
+            if row_form not in requested_forms or not file_match:
                 continue
 
             cik, accession = file_match.group(1), file_match.group(2)
             existing = entries.get(accession)
             if existing is None:
                 entries[accession] = {
-                    'title': f"{form_type} - {company}".strip(),
+                    'title': f"{row_form} - {company}".strip(),
                     'link': (f"https://www.sec.gov/Archives/edgar/data/"
                              f"{cik}/{accession}.txt"),
                     'cik': cik,
                     'accession_number': accession,
                     'company_name': company,
                     'updated': date_str,
-                    'form_type': form_type,
+                    'form_type': row_form,
                     'ciks': [cik],
                 }
             elif cik not in existing['ciks']:

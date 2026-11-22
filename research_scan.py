@@ -4,6 +4,7 @@ Usage: python research_scan.py --start 2026-11-09 --end 2026-11-20
 Requires config.py copied from config_example.py and SEC_USER_AGENT in the env.
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import html
 import json
 import re
@@ -11,6 +12,8 @@ import sqlite3
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta
 from pathlib import Path
+
+from pandas.tseries.holiday import USFederalHolidayCalendar
 from zoneinfo import ZoneInfo
 
 from config import EDGAR_CONFIG
@@ -20,6 +23,23 @@ from form4_parser import Form4Parser
 EASTERN = ZoneInfo('America/New_York')
 COMMON_STOCK = re.compile(r'\b(common stock|common shares|ordinary shares)\b', re.I)
 PRIVATE_DEAL = re.compile(r'private placement|privately negotiated|subscription agreement|purchase agreement', re.I)
+
+
+def filing_days(start, end):
+    """EDGAR operates on weekdays except observed federal holidays."""
+    holidays = {day.date() for day in USFederalHolidayCalendar().holidays(start=start, end=end)}
+    return [start + timedelta(days=offset) for offset in range((end - start).days + 1)
+            if (start + timedelta(days=offset)).weekday() < 5
+            and start + timedelta(days=offset) not in holidays]
+
+
+def latest_completed_filing_day(today):
+    days = filing_days(today - timedelta(days=14), today - timedelta(days=1))
+    return days[-1]
+
+
+def markdown_text(value):
+    return html.escape(str(value or '')).replace('\n', ' ').replace('|', '&#124;')
 
 
 def transaction_calendar_date(value):
@@ -89,34 +109,25 @@ def find_clusters(filings, as_of, days=7, minimum=3):
 
 def collect_filing(fetcher, parser, filing):
     accession = filing['accession_number']
-    for cik in filing.get('ciks') or [filing['cik']]:
-        xml = fetcher.fetch_form4_xml(cik, accession)
-        if not xml:
-            continue
-        root = ET.fromstring(xml)
-        if root.tag != 'ownershipDocument':
-            raise ValueError('Unexpected ownership document root')
-        accepted = fetcher.fetch_acceptance_datetime(cik, accession)
-        if not accepted:
-            raise ValueError('SEC acceptance timestamp unavailable')
-        transactions = parser.parse(xml, accession, filing['updated'][:10], accepted)
-        expected = len(root.findall('./nonDerivativeTable/nonDerivativeTransaction'))
-        if len(transactions) != expected:
-            raise ValueError('Parser did not preserve every non-derivative transaction')
-        for transaction in transactions:
-            transaction['filing_url'] = (f'https://www.sec.gov/Archives/edgar/data/{cik}/'
-                                         f'{accession.replace("-", "")}/{accession}-index.html')
-            transaction['transaction_date'] = str(transaction_calendar_date(transaction['transaction_date']))
-        # Amendments with only holdings still invalidate automated issuer counting.
-        if root.findtext('documentType') == '4/A' and not transactions:
-            transactions = [{
-                'document_type': '4/A',
-                'issuer_cik': root.findtext('./issuer/issuerCik'),
-                'accepted_datetime': accepted,
-                'transaction_date': filing['updated'][:10],
-            }]
-        return transactions
-    raise ValueError('Could not retrieve filing XML under any listed filer')
+    xml, accepted = fetcher.fetch_ownership_submission(filing['link'])
+    root = ET.fromstring(xml)
+    transactions = parser.parse(xml, accession, filing['updated'][:10], accepted)
+    expected = len(root.findall('./nonDerivativeTable/nonDerivativeTransaction'))
+    if len(transactions) != expected:
+        raise ValueError('Parser did not preserve every non-derivative transaction')
+    for transaction in transactions:
+        transaction['filing_url'] = filing['link']
+        transaction['transaction_date'] = str(transaction_calendar_date(transaction['transaction_date']))
+    # Amendments with only holdings still invalidate automated issuer counting.
+    if root.findtext('documentType') == '4/A' and not transactions:
+        transactions = [{
+            'document_type': '4/A',
+            'issuer_cik': root.findtext('./issuer/issuerCik'),
+            'accepted_datetime': accepted,
+            'transaction_date': filing['updated'][:10],
+            'filing_url': filing['link'],
+        }]
+    return transactions
 
 
 def write_report(output, clusters, coverage):
@@ -150,13 +161,45 @@ def write_report(output, clusters, coverage):
     (output / 'report.html').write_text('<!doctype html><html lang="en"><meta charset="utf-8">'
                                        '<title>Insider purchase research</title><body>' + ''.join(sections) + '</body></html>', encoding='utf-8')
 
+    lines = ['# Live insider purchase report', '', f'**{status}**', '',
+             f'Latest filing day covered — **{coverage["as_of"]}**. '
+             f'Generated — {coverage.get("generated_at", "demo")}.', '',
+             f'{coverage.get("stored_filings", 0):,} filings collected. '
+             f'**{len(clusters)} candidate companies** meet the three-buyer rule.', '',
+             'Each company below has at least three distinct officers or directors '
+             'reporting positive-price common-share purchases within seven calendar dates. '
+             'Read the SEC filings before making a decision.', '']
+    if coverage['errors']:
+        lines += ['**Collection has gaps. Review the errors below before using these results.**', '']
+    for cluster in clusters:
+        lines += [f'## {markdown_text(cluster["ticker"])} — {markdown_text(cluster["company"])}', '',
+                  f'**{cluster["buyers"]} buyers · ${cluster["total_value"]:,.2f} reported purchases**', '',
+                  '| Buyer | Role | Trade date | Reported value | Evidence |',
+                  '| --- | --- | --- | ---: | --- |']
+        for transaction in cluster['purchases']:
+            url = transaction.get('filing_url', '')
+            evidence = f'[SEC filing]({url})' if url.startswith('https://www.sec.gov/') else 'Unavailable'
+            lines.append(f'| {markdown_text(transaction["insider_name"])} '
+                         f'| {markdown_text(transaction["insider_title"] or "Director")} '
+                         f'| {transaction["transaction_date"]} | ${transaction["total_value"]:,.2f} | {evidence} |')
+        lines.append('')
+    if not clusters:
+        lines += ['No qualifying companies in the collected filings.', '']
+    lines += ['## How to read this report', '',
+              'The dollar amount is what insiders reported purchasing. It is not a suggested investment amount. '
+              'Joint-owner filings, detected private deals, and issuers with collected amendments are excluded. '
+              'These filters can omit valid purchases. Entry and exit rules still require profitability testing.', '',
+              '## Collection details', '', '```json', json.dumps(coverage, indent=2), '```', '']
+    (output / 'report.md').write_text('\n'.join(lines), encoding='utf-8')
+
 
 def main():
     today = datetime.now(EASTERN).date()
     argument_parser = argparse.ArgumentParser(description=__doc__)
     argument_parser.add_argument('--demo', action='store_true', help='Create a clearly labeled report from fictional purchases')
-    argument_parser.add_argument('--start', type=date.fromisoformat, default=today - timedelta(days=14))
-    argument_parser.add_argument('--end', type=date.fromisoformat, default=today - timedelta(days=1))
+    argument_parser.add_argument('--start', type=date.fromisoformat, default=latest_completed_filing_day(today) - timedelta(days=6))
+    argument_parser.add_argument('--end', type=date.fromisoformat, default=latest_completed_filing_day(today))
+    argument_parser.add_argument('--workers', type=int, choices=range(1, 5), default=4)
     argument_parser.add_argument('--database', default='research_filings.db')
     argument_parser.add_argument('--output', type=Path, default=Path('research_results'))
     args = argument_parser.parse_args()
@@ -188,37 +231,60 @@ def main():
     if '@' not in user_agent or 'example.com' in user_agent or 'your_email' in user_agent:
         argument_parser.error('Set SEC_USER_AGENT to your name and contact email')
     fetcher, parser = EdgarFetcher(), Form4Parser()
-    coverage = {'start': str(args.start), 'as_of': str(args.end), 'indexes': [], 'errors': [], 'stored_filings': 0}
+    coverage = {'start': str(args.start), 'as_of': str(args.end),
+                'generated_at': datetime.now(EASTERN).isoformat(timespec='seconds'),
+                'indexes': [], 'errors': [], 'stored_filings': 0}
+    completed_days = filing_days(args.start, args.end)
+    coverage['closed_dates'] = [str(args.start + timedelta(days=offset))
+                                for offset in range((args.end - args.start).days + 1)
+                                if args.start + timedelta(days=offset) not in completed_days]
     with sqlite3.connect(args.database, timeout=60) as connection:
         connection.execute('CREATE TABLE IF NOT EXISTS research_filings (accession TEXT PRIMARY KEY, filing_date TEXT, payload TEXT NOT NULL)')
-        current = args.start
-        while current <= args.end:
-            if current.weekday() < 5:
-                try:
-                    # Existing date-index reader provides full-day coverage, not a rolling RSS sample.
-                    filings = fetcher.get_filings_for_date(str(current), form_type='4')
-                    amendments = fetcher.get_filings_for_date(str(current), form_type='4/A')
-                    coverage['indexes'].append({'date': str(current), 'filings': len(filings), 'amendments': len(amendments)})
-                    for filing in filings + amendments:
-                        accession = filing['accession_number']
-                        if connection.execute('SELECT 1 FROM research_filings WHERE accession=?', (accession,)).fetchone():
-                            continue
-                        try:
-                            transactions = collect_filing(fetcher, parser, filing)
-                            # One transaction commits both the complete snapshot and processed state.
-                            connection.execute('INSERT OR IGNORE INTO research_filings VALUES (?,?,?)',
-                                               (accession, str(current), json.dumps(transactions)))
-                            connection.commit()
-                        except Exception as error:
-                            coverage['errors'].append({'accession': accession, 'error': str(error)})
-                except Exception as error:
-                    # Includes missing indexes on federal holidays. Never silently label these complete.
-                    coverage['errors'].append({'date': str(current), 'error': str(error)})
-                print(f'{current}: collection checked', flush=True)
-            current += timedelta(days=1)
+        for current in completed_days:
+            try:
+                filings = fetcher.get_filings_for_date(str(current), form_type=None)
+                coverage['indexes'].append({
+                    'date': str(current),
+                    'filings': sum(f['form_type'] == '4' for f in filings),
+                    'amendments': sum(f['form_type'] == '4/A' for f in filings),
+                })
+            except Exception as error:
+                coverage['errors'].append({'date': str(current), 'error': str(error)})
+                continue
+            pending = []
+            for filing in filings:
+                cached = connection.execute('SELECT payload FROM research_filings WHERE accession=?',
+                                            (filing['accession_number'],)).fetchone()
+                if cached:
+                    transactions = json.loads(cached[0])
+                    for transaction in transactions:
+                        transaction.setdefault('filing_url', filing['link'])
+                    connection.execute('UPDATE research_filings SET payload=? WHERE accession=?',
+                                       (json.dumps(transactions), filing['accession_number']))
+                    connection.commit()
+                else:
+                    pending.append(filing)
+            with ThreadPoolExecutor(max_workers=args.workers) as executor:
+                futures = {executor.submit(collect_filing, EdgarFetcher(), Form4Parser(), filing): filing
+                           for filing in pending}
+                for count, future in enumerate(as_completed(futures), 1):
+                    filing = futures[future]
+                    accession = filing['accession_number']
+                    try:
+                        transactions = future.result()
+                        connection.execute('INSERT OR IGNORE INTO research_filings VALUES (?,?,?)',
+                                           (accession, str(current), json.dumps(transactions)))
+                        connection.commit()
+                    except Exception as error:
+                        coverage['errors'].append({'accession': accession, 'error': str(error)})
+                    if count % 100 == 0 or count == len(pending):
+                        print(f'{current}: {count}/{len(pending)} new filings checked', flush=True)
+            print(f'{current}: {len(filings)} filings in index', flush=True)
         rows = connection.execute('SELECT payload FROM research_filings WHERE filing_date BETWEEN ? AND ?',
                                   (str(args.start), str(args.end))).fetchall()
     coverage['stored_filings'] = len(rows)
+    if args.start > args.end - timedelta(days=6):
+        coverage['errors'].append({'window': 'Collection range is shorter than seven calendar dates'})
     clusters = find_clusters([json.loads(row[0]) for row in rows], args.end)
     write_report(args.output, clusters, coverage)
     print(f'{len(clusters)} candidate clusters. Report: {args.output / "report.html"}')
