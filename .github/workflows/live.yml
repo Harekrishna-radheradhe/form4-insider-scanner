@@ -74,14 +74,18 @@ jobs:
         if: always() && hashFiles('reports/latest/report.md') != ''
         shell: bash
         run: |
-          cp reports/latest/report.md LIVE_REPORT.md
+          git fetch origin main
+          publish_directory=$(mktemp -d)
+          git worktree add --detach "$publish_directory" origin/main
+          mkdir -p "$publish_directory/reports/latest"
+          cp reports/latest/report.md "$publish_directory/LIVE_REPORT.md"
+          cp reports/latest/report.md reports/latest/report.html reports/latest/report.json "$publish_directory/reports/latest/"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add LIVE_REPORT.md reports/latest/report.md reports/latest/report.html reports/latest/report.json
-          if ! git diff --cached --quiet; then
-            git commit -m 'Update live SEC insider purchase report'
-            git pull --rebase origin main
-            git push origin HEAD:main
+          git -C "$publish_directory" add LIVE_REPORT.md reports/latest/report.md reports/latest/report.html reports/latest/report.json
+          if ! git -C "$publish_directory" diff --cached --quiet; then
+            git -C "$publish_directory" commit -m 'Update live SEC insider purchase report'
+            git -C "$publish_directory" push origin HEAD:main
           fi
       - name: Save downloadable live report
         if: always()
