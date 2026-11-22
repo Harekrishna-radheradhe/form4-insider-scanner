@@ -54,6 +54,7 @@ def eligible_purchase(transaction):
     """Conservative candidates for manual filing review, including footnotes."""
     return (
         transaction.get('document_type') == '4'
+        and (transaction.get('issuer_ticker') or '').strip().upper() not in {'', 'NONE', 'N/A', 'NA', 'NULL'}
         and transaction.get('owner_count') == 1
         and bool(transaction.get('is_officer') or transaction.get('is_director'))
         and bool(transaction.get('insider_cik'))
@@ -81,11 +82,12 @@ def find_clusters(filings, as_of, days=7, minimum=3):
             accepted = datetime.fromisoformat(transaction['accepted_datetime']).astimezone(EASTERN).date()
             if accepted > as_of:
                 continue
+            issuer_cik = str(int(transaction['issuer_cik']))
             if transaction.get('document_type') == '4/A':
-                amended_issuers.add(transaction['issuer_cik'])
+                amended_issuers.add(issuer_cik)
             transaction_date = transaction_calendar_date(transaction['transaction_date'])
             if cutoff <= transaction_date <= as_of and eligible_purchase(transaction):
-                transactions.append(dict(transaction, transaction_date=str(transaction_date)))
+                transactions.append(dict(transaction, transaction_date=str(transaction_date), issuer_cik=issuer_cik))
     groups = {}
     for transaction in transactions:
         issuer = transaction['issuer_cik']

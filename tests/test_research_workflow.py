@@ -137,3 +137,15 @@ def test_live_markdown_has_evidence_and_no_demo(tmp_path):
     assert '[SEC filing](https://www.sec.gov/Archives/test.txt)' in report
     assert 'DEMO' not in report
     assert '3 buyers' in report
+
+
+@pytest.mark.parametrize('ticker', ['NONE', '', 'N/A'])
+def test_placeholder_ticker_is_excluded(ticker):
+    assert not eligible_purchase(purchase(issuer_ticker=ticker))
+
+
+def test_issuer_cik_padding_does_not_split_buyers_or_amendments():
+    filings = [[purchase('1', issuer_cik='0000123')], [purchase('2')], [purchase('3')]]
+    assert len(find_clusters(filings, date(2026, 11, 20))) == 1
+    filings.append([purchase('1', document_type='4/A', issuer_cik='0000000123')])
+    assert find_clusters(filings, date(2026, 11, 20)) == []
