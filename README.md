@@ -1,3 +1,76 @@
+# Nikhil's Form 4 Research Fork
+
+This fork adds a research workflow for three distinct officers or directors buying
+common shares within seven calendar dates. Review each candidate's original SEC
+filing and footnotes before making an investment decision.
+
+## Run the research report
+
+Use Python 3.12. Install `requirements-research.txt`, then copy
+`config_example.py` to `config.py`. Set `SEC_USER_AGENT` in your environment to your
+name and contact email, as required for SEC automated access. Credentials belong
+in your environment, never in Git commits.
+
+```bash
+python -m pip install -r requirements-research.txt
+cp config_example.py config.py
+python research_scan.py --demo
+python research_scan.py --start 2026-11-09 --end 2026-11-20
+```
+
+Open `research_results/report.html` to review results. `report.json` contains the
+same evidence and collection status. The demo uses explicitly fictional purchases.
+The live command reads complete daily indexes, including amendments, for completed
+US Eastern filing days. It caches complete filings atomically in
+`research_filings.db`. Repeated runs reuse that cache. Errors produce a partial
+report and a failing exit code. Unavailable holiday indexes also remain visible as
+collection errors. Use at least a seven-day collection range for the seven-day rule.
+
+A manual GitHub Actions workflow named **Research checks and report** can run the
+checks and demo without local installation. For its live mode, configure the
+repository Actions secret `SEC_USER_AGENT`. Reports are downloadable as workflow
+artifacts. Each Actions run starts a fresh collection. Automatic daily scheduling
+and persistent hosted storage require additional setup.
+
+## Candidate rules and limitations
+
+- Count distinct reporting-owner CIKs, with officers or directors only.
+- Require code P, acquisition A, positive price and shares, and a common-stock or
+  ordinary-share title. Code P can include private purchases, so this is a review list.
+- Exclude joint-owner filings because independent ownership is ambiguous.
+- Exclude detected private-deal language. Footnote keywords cannot classify every deal.
+- Suppress an issuer with any collected Form 4/A, pending manual reconciliation.
+- Use SEC acceptance timestamps to exclude information disclosed after the report date.
+- The original `main.py` remains an upstream legacy entry point. Use
+  `research_scan.py` for this fork's candidate report. Legacy scoring, email return
+  claims, and the old report text below have not been validated by this fork.
+
+## Historical research
+
+The historical engine now evaluates only purchases disclosed by each filing date,
+then enters at the following session's adjusted opening price and exits at the
+close of the selected holding session. Benchmark entries use the same opening
+session and exits use exactly matching dates. Set `FORM4_DATA_DIR` and
+`FORM4_OUTPUT_DIR` to change the local data and output locations.
+
+```bash
+python -m pytest -q
+python insider_cluster_backtest.py
+```
+
+The earlier numerical results below predate these timing corrections. They must be
+recomputed. A complete historical run has not been validated in this fork. The
+historical script still lacks full amendment and footnote reconciliation, trading
+costs, and a delisting-complete price source. It does not establish profitability.
+
+The upstream README states MIT. A standalone license text was absent at the
+reviewed commit. Preserve upstream attribution and clarify the license before
+redistributing this as a separate product.
+
+---
+
+## Original upstream documentation
+
 # Form 4 Insider Scanner
 
 **Automated SEC Form 4 filing scanner that detects insider buying clusters, sell signals, and cross-signal patterns (insider activity x short interest). Backtested against 432,625 trades across 5,717 tickers from 2020-2025.**
