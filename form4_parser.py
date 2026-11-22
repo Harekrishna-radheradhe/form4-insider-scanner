@@ -44,7 +44,10 @@ class Form4Parser:
                 'accession_number': accession_number,
                 'filing_date': filing_date,
                 'accepted_datetime': accepted_datetime,
-                **issuer_info, **owner_info, **plan_info, **txn
+                **issuer_info, **owner_info, **plan_info, **txn,
+                'owner_count': len(root.findall('.//reportingOwner')),
+                'document_type': root.findtext('documentType'),
+                'footnotes': ' '.join((el.text or '') for el in root.findall('.//footnote'))
             }
             transactions.append(transaction)
         return transactions
@@ -150,6 +153,7 @@ class Form4Parser:
             # left alone.
             price_per_share = float(price.text) if price is not None and price.text else None
             return {
+                'security_title': security.text.strip() if security is not None and security.text else None,
                 'transaction_date': txn_date.text.strip() if txn_date is not None and txn_date.text else None,
                 'transaction_code': txn_code.text.strip() if txn_code is not None and txn_code.text else None,
                 'shares_amount': shares_amount,

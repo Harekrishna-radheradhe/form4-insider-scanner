@@ -25,3 +25,6 @@ Thumbs.db
 .vscode/
 .idea/
 *.log
+
+# Generated research output
+research_results/

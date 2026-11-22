@@ -34,16 +34,16 @@ from collections import defaultdict
 # ============================================================
 
 DATA_DIR = os.path.expanduser(
-    "~/Desktop/Claude_Programs/Trading_Programs/Form4_Scanner/SEC_Form4_Data"
+    os.environ.get("FORM4_DATA_DIR", "SEC_Form4_Data")
 )
 OUTPUT_DIR = os.path.expanduser(
-    "~/Desktop/Claude_Programs/Trading_Programs/Form4_Scanner"
+    os.environ.get("FORM4_OUTPUT_DIR", "research_results")
 )
 DB_PATH = os.path.join(OUTPUT_DIR, "insider_backtest_results.db")
 REPORT_PATH = os.path.join(OUTPUT_DIR, "insider_backtest_report.txt")
 
 # Cluster detection parameters
-CLUSTER_WINDOW_DAYS = 14       # Days to group insider buys
+CLUSTER_WINDOW_DAYS = 7       # Days to group insider buys
 MIN_CLUSTER_SIZE = 3           # Minimum unique insiders to qualify
 
 # Forward return windows (trading days)
@@ -175,7 +175,7 @@ def extract_purchases(submissions, transactions, owners):
     # Join key is ACCESSION_NUMBER
     purchases = purchases.merge(
         submissions[['ACCESSION_NUMBER', 'ISSUERTRADINGSYMBOL', 'ISSUERNAME',
-                      'FILING_DATE']].drop_duplicates('ACCESSION_NUMBER'),
+                      'FILING_DATE', 'DOCUMENT_TYPE', 'ISSUERCIK']].drop_duplicates('ACCESSION_NUMBER'),
         on='ACCESSION_NUMBER',
         how='left'
     )
@@ -183,23 +183,20 @@ def extract_purchases(submissions, transactions, owners):
     # Merge with owners to get insider name, role, and title
     # SEC bulk data uses: RPTOWNERNAME, RPTOWNER_RELATIONSHIP, RPTOWNER_TITLE
     owner_cols = ['ACCESSION_NUMBER']
-    for col in ['RPTOWNERNAME', 'RPTOWNER_RELATIONSHIP', 'RPTOWNER_TITLE']:
+    for col in ['RPTOWNERCIK', 'RPTOWNERNAME', 'RPTOWNER_RELATIONSHIP', 'RPTOWNER_TITLE']:
         if col in owners.columns:
             owner_cols.append(col)
     
-    # Keep ALL owners per accession (don't dedup - need all insiders for cluster counting)
-    # But first, deduplicate owners per accession: keep the one with the best title info
-    # (Some filings have multiple reporting owners like individual + trust)
-    owners_for_merge = owners[owner_cols].copy()
-    owners_for_merge['_has_title'] = owners_for_merge.get('RPTOWNER_TITLE', pd.Series(dtype=str)).notna().astype(int)
-    owners_for_merge = owners_for_merge.sort_values('_has_title', ascending=False)
-    owners_for_merge = owners_for_merge.drop_duplicates('ACCESSION_NUMBER', keep='first')
-    owners_for_merge = owners_for_merge.drop(columns=['_has_title'])
+    # Joint filings do not establish independent purchases by every co-filer.
+    owners_for_merge = owners[owner_cols].drop_duplicates(['ACCESSION_NUMBER', 'RPTOWNERCIK'])
+    counts = owners_for_merge.groupby('ACCESSION_NUMBER')['RPTOWNERCIK'].transform('size')
+    owners_for_merge = owners_for_merge[counts == 1]
     purchases = purchases.merge(owners_for_merge, on='ACCESSION_NUMBER', how='left')
     
     # Clean up key fields
     purchases['TICKER'] = purchases['ISSUERTRADINGSYMBOL'].str.strip().str.upper()
-    purchases['TRANS_DATE'] = pd.to_datetime(purchases['TRANS_DATE'], errors='coerce')
+    purchases['TRANS_DATE'] = pd.to_datetime(purchases['TRANS_DATE'], errors='coerce', format='mixed')
+    purchases['FILING_DATE'] = pd.to_datetime(purchases['FILING_DATE'], errors='coerce', format='mixed')
     purchases['TRANS_SHARES'] = pd.to_numeric(purchases['TRANS_SHARES'], errors='coerce')
     purchases['TRANS_PRICEPERSHARE'] = pd.to_numeric(
         purchases['TRANS_PRICEPERSHARE'], errors='coerce'
@@ -244,13 +241,26 @@ def extract_purchases(submissions, transactions, owners):
             'ROLE'
         ] = '10% Owner'
     
+    # Keep the historical universe close to the live candidate definition.
+    # Footnotes are not loaded here, so private-deal classification still needs review.
+    purchases = purchases[purchases['DOCUMENT_TYPE'].eq('4')]
+    purchases = purchases[
+        purchases['SECURITY_TITLE'].str.contains(
+            r'\b(?:common stock|common shares|ordinary shares)\b', case=False, na=False)
+        & ~purchases['SECURITY_TITLE'].str.contains('preferred|unit|warrant', case=False, na=False)
+        & purchases['RPTOWNER_RELATIONSHIP'].str.contains('OFFICER|DIRECTOR', case=False, na=False)
+    ]
+
     # Drop rows without essential data
     before = len(purchases)
-    purchases = purchases.dropna(subset=['TICKER', 'TRANS_DATE', 'TRANS_SHARES'])
+    purchases = purchases.dropna(subset=['TICKER', 'TRANS_DATE', 'TRANS_SHARES', 'FILING_DATE', 'RPTOWNERNAME', 'RPTOWNERCIK'])
     purchases = purchases[purchases['TICKER'].str.len() <= 5]  # Valid tickers only
-    purchases = purchases[purchases['TRANS_SHARES'] > 0]
+    purchases = purchases[(purchases['TRANS_SHARES'] > 0) &
+                          (purchases['TRANS_PRICEPERSHARE'] > 0)]
     
     print(f"  After cleanup: {len(purchases):,} purchases ({before - len(purchases):,} dropped)")
+    if purchases.empty:
+        return purchases
     print(f"  Date range: {purchases['TRANS_DATE'].min().date()} to "
           f"{purchases['TRANS_DATE'].max().date()}")
     print(f"  Unique tickers: {purchases['TICKER'].nunique():,}")
@@ -269,134 +279,60 @@ def extract_purchases(submissions, transactions, owners):
 #  STEP 3: DETECT BUYING CLUSTERS
 # ============================================================
 
-def detect_clusters(purchases, window_days=14, min_insiders=3):
+def detect_clusters(purchases, window_days=7, min_insiders=3):
+    """Evaluate only purchases publicly disclosed by each filing date.
+
+    SEC bulk data supplies filing dates, so signals become eligible after that
+    day's close. Entry is the next session's open. This deliberately ignores
+    intraday availability. All cluster features use the same information cutoff.
     """
-    Find clusters where min_insiders or more unique insiders buy 
-    the same stock within a rolling window.
-    
-    Returns a DataFrame of cluster events with metadata.
-    """
-    
-    print("\n" + "=" * 70)
-    print("  STEP 3: DETECTING INSIDER BUYING CLUSTERS")
-    print(f"  Window: {window_days} days | Minimum insiders: {min_insiders}")
-    print("=" * 70)
-    
+    required = {'TICKER', 'TRANS_DATE', 'FILING_DATE', 'RPTOWNERNAME'}
+    if not required.issubset(purchases.columns):
+        raise ValueError(f"Missing required disclosure fields: {required - set(purchases.columns)}")
+    purchases = purchases.dropna(subset=list(required)).copy()
+    purchases['FILING_DATE'] = pd.to_datetime(purchases['FILING_DATE']).dt.normalize()
+    purchases['TRANS_DATE'] = pd.to_datetime(purchases['TRANS_DATE']).dt.normalize()
     clusters = []
-    tickers = purchases['TICKER'].unique()
-    
-    for i, ticker in enumerate(tickers):
-        if (i + 1) % 500 == 0:
-            print(f"  Processing ticker {i+1:,}/{len(tickers):,}...")
-        
-        ticker_buys = purchases[purchases['TICKER'] == ticker].sort_values('TRANS_DATE')
-        
-        if len(ticker_buys) < min_insiders:
-            continue
-        
-        # Rolling window approach: for each purchase, look forward window_days
-        dates = ticker_buys['TRANS_DATE'].values
-        
-        # Use a sliding window to find clusters
-        for idx in range(len(ticker_buys)):
-            window_start = ticker_buys.iloc[idx]['TRANS_DATE']
-            window_end = window_start + timedelta(days=window_days)
-            
-            # Get all purchases in this window
-            window_mask = (
+    for ticker, ticker_buys in purchases.groupby('TICKER'):
+        last_signal = None
+        for signal_date in sorted(ticker_buys['FILING_DATE'].unique()):
+            signal_date = pd.Timestamp(signal_date)
+            # Seven calendar dates inclusive, with no future transactions.
+            window_start = signal_date - timedelta(days=window_days - 1)
+            window_buys = ticker_buys[
+                (ticker_buys['FILING_DATE'] <= signal_date) &
                 (ticker_buys['TRANS_DATE'] >= window_start) &
-                (ticker_buys['TRANS_DATE'] <= window_end)
-            )
-            window_buys = ticker_buys[window_mask]
-            
-            # Count unique insiders
-            if 'RPTOWNERNAME' in window_buys.columns:
-                unique_insiders = window_buys['RPTOWNERNAME'].nunique()
-            else:
-                unique_insiders = len(window_buys)
-            
-            if unique_insiders >= min_insiders:
-                # Record the cluster signal at the END of the cluster window
-                # (i.e., when the min_insiders threshold is met)
-                last_buy_date = window_buys['TRANS_DATE'].max()
-                total_shares = window_buys['TRANS_SHARES'].sum()
-                total_dollars = window_buys['DOLLAR_VALUE'].sum()
-                
-                # Get roles involved
-                roles = window_buys['ROLE'].unique().tolist()
-                has_ceo = 'CEO' in roles
-                has_cfo = 'CFO' in roles
-                has_csuite = has_ceo or has_cfo or 'COO' in roles or 'President' in roles
-                
-                # Average purchase price
-                avg_price = window_buys['TRANS_PRICEPERSHARE'].mean()
-                
-                # Get company name
-                company = window_buys['ISSUERNAME'].iloc[0] if 'ISSUERNAME' in window_buys.columns else ''
-                
-                clusters.append({
-                    'ticker': ticker,
-                    'company': company,
-                    'cluster_start': window_start,
-                    'cluster_end': last_buy_date,
-                    'signal_date': last_buy_date,  # Date we'd act on
-                    'num_insiders': unique_insiders,
-                    'num_transactions': len(window_buys),
-                    'total_shares': total_shares,
-                    'total_dollars': total_dollars,
-                    'avg_price': avg_price,
-                    'roles': ','.join(sorted(roles)),
-                    'has_csuite': has_csuite,
-                    'has_ceo': has_ceo,
-                    'has_cfo': has_cfo,
-                })
-    
-    clusters_df = pd.DataFrame(clusters)
-    
-    if len(clusters_df) == 0:
-        print("  No clusters found! Check your data and parameters.")
-        return clusters_df
-    
-    # Deduplicate: same ticker within 7 days = same cluster signal
-    # Keep the one with the most insiders
-    clusters_df = clusters_df.sort_values(
-        ['ticker', 'signal_date', 'num_insiders'], 
-        ascending=[True, True, False]
-    )
-    
-    # Remove overlapping clusters for same ticker
-    deduped = []
-    last_ticker = None
-    last_date = None
-    
-    for _, row in clusters_df.iterrows():
-        if (last_ticker != row['ticker'] or 
-            last_date is None or
-            (row['signal_date'] - last_date).days > 7):
-            deduped.append(row)
-            last_ticker = row['ticker']
-            last_date = row['signal_date']
-    
-    clusters_df = pd.DataFrame(deduped)
-    
-    print(f"\n  Clusters detected: {len(clusters_df):,}")
-    print(f"  Unique tickers with clusters: {clusters_df['ticker'].nunique():,}")
-    print(f"  Date range: {clusters_df['signal_date'].min().date()} to "
-          f"{clusters_df['signal_date'].max().date()}")
-    
-    # Breakdown by cluster size
-    print(f"\n  Cluster size distribution:")
-    for size in sorted(clusters_df['num_insiders'].unique()):
-        count = (clusters_df['num_insiders'] == size).sum()
-        print(f"    {size} insiders: {count:>6,} clusters")
-    
-    # Breakdown by year
-    clusters_df['year'] = clusters_df['signal_date'].dt.year
-    print(f"\n  Clusters by year:")
-    for year, count in clusters_df.groupby('year').size().items():
-        print(f"    {year}: {count:>6,} clusters")
-    
-    return clusters_df
+                (ticker_buys['TRANS_DATE'] <= signal_date)
+            ]
+            identity = 'RPTOWNERCIK' if 'RPTOWNERCIK' in window_buys.columns else 'RPTOWNERNAME'
+            unique_insiders = window_buys[identity].nunique()
+            if unique_insiders < min_insiders:
+                continue
+            # Suppress repeat signals using only the previously emitted signal.
+            if last_signal is not None and (signal_date - last_signal).days < window_days:
+                continue
+            roles = sorted(window_buys['ROLE'].dropna().unique())
+            total_shares = window_buys['TRANS_SHARES'].sum()
+            total_dollars = window_buys['DOLLAR_VALUE'].sum()
+            clusters.append({
+                'ticker': ticker,
+                'company': window_buys['ISSUERNAME'].iloc[0],
+                'cluster_start': window_buys['TRANS_DATE'].min(),
+                'cluster_end': window_buys['TRANS_DATE'].max(),
+                'signal_date': signal_date,
+                'num_insiders': unique_insiders,
+                'num_transactions': len(window_buys),
+                'total_shares': total_shares,
+                'total_dollars': total_dollars,
+                'avg_price': total_dollars / total_shares,
+                'roles': ','.join(roles),
+                'has_csuite': bool(set(roles) & {'CEO', 'CFO', 'COO', 'President'}),
+                'has_ceo': 'CEO' in roles,
+                'has_cfo': 'CFO' in roles,
+                'year': signal_date.year,
+            })
+            last_signal = signal_date
+    return pd.DataFrame(clusters)
 
 
 # ============================================================
@@ -439,6 +375,7 @@ def fetch_forward_returns(clusters_df, return_windows=[5, 10, 20, 40, 60]):
     
     # Fetch in batches to avoid rate limits
     all_prices = {}
+    all_opens = {}
     failed_tickers = []
     
     for batch_start in range(0, len(all_tickers), BATCH_SIZE):
@@ -465,12 +402,14 @@ def fetch_forward_returns(clusters_df, return_windows=[5, 10, 20, 40, 60]):
                 for t in batch:
                     if t in close.columns and close[t].notna().sum() > 0:
                         all_prices[t] = close[t].dropna()
+                        all_opens[t] = data['Open'][t].dropna()
                     else:
                         failed_tickers.append(t)
             elif len(batch) == 1:
                 # Single ticker
                 if 'Close' in data.columns and data['Close'].notna().sum() > 0:
                     all_prices[batch[0]] = data['Close'].dropna()
+                    all_opens[batch[0]] = data['Open'].dropna()
                 else:
                     failed_tickers.append(batch[0])
             
@@ -505,31 +444,19 @@ def fetch_forward_returns(clusters_df, return_windows=[5, 10, 20, 40, 60]):
         
         prices = all_prices[ticker]
         
-        # Find the next trading day on or after signal_date
-        # (Signal fires after market close, so we enter next day)
-        entry_candidates = prices[prices.index >= signal_date]
-        if len(entry_candidates) < 2:
+        # Use the first available session strictly AFTER disclosure day.
+        opens = all_opens[ticker]
+        entry_candidates = opens[opens.index > signal_date]
+        if entry_candidates.empty:
             skipped += 1
             continue
-        
-        # Entry on next trading day after signal
-        entry_idx = 0
-        if prices.index[prices.index >= signal_date][0] == signal_date:
-            entry_idx_loc = prices.index.get_loc(
-                prices.index[prices.index >= signal_date][0]
-            )
-            # Enter the day AFTER signal date (next open)
-            if entry_idx_loc + 1 < len(prices):
-                entry_price_date = prices.index[entry_idx_loc + 1]
-            else:
-                skipped += 1
-                continue
-        else:
-            entry_price_date = prices.index[prices.index >= signal_date][0]
-        
-        entry_price = prices[entry_price_date]
+        entry_price_date = entry_candidates.index[0]
+        entry_price = entry_candidates.iloc[0]
+        if entry_price_date not in prices.index or entry_price <= 0:
+            skipped += 1
+            continue
         entry_pos = prices.index.get_loc(entry_price_date)
-        
+
         result = {
             'ticker': ticker,
             'company': row['company'],
@@ -548,7 +475,7 @@ def fetch_forward_returns(clusters_df, return_windows=[5, 10, 20, 40, 60]):
         
         # Calculate returns at each window
         for window in return_windows:
-            exit_pos = entry_pos + window
+            exit_pos = entry_pos + window - 1
             
             # Stock return
             if exit_pos < len(prices):
@@ -562,11 +489,10 @@ def fetch_forward_returns(clusters_df, return_windows=[5, 10, 20, 40, 60]):
             if spy_prices is not None and exit_pos < len(prices):
                 exit_date = prices.index[exit_pos]
                 
-                spy_entry = spy_prices[spy_prices.index >= entry_price_date]
-                spy_exit = spy_prices[spy_prices.index >= exit_date]
-                
-                if len(spy_entry) > 0 and len(spy_exit) > 0:
-                    spy_ret = ((spy_exit.iloc[0] / spy_entry.iloc[0]) - 1) * 100
+                spy_opens = all_opens.get('SPY')
+                if (spy_opens is not None and entry_price_date in spy_opens.index
+                        and exit_date in spy_prices.index):
+                    spy_ret = ((spy_prices.loc[exit_date] / spy_opens.loc[entry_price_date]) - 1) * 100
                     result[f'spy_{window}d'] = spy_ret
                     result[f'alpha_{window}d'] = ret - spy_ret
                 else:
@@ -791,6 +717,7 @@ def save_results(results_df, clusters_df, report_lines):
     print("=" * 70)
     
     # Save to SQLite
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     results_df.to_sql('backtest_results', conn, if_exists='replace', index=False)
     clusters_df.to_sql('clusters', conn, if_exists='replace', index=False)
