@@ -2,9 +2,9 @@
 
 **Collection complete for requested published indexes**
 
-Latest filing day covered — **2026-11-20**. Generated — 2026-11-22T02:01:03-05:00.
+Latest filing day covered — **2026-11-20**. Generated — 2026-11-22T02:04:15-05:00.
 
-3,604 filings collected. **22 candidate companies** meet the three-buyer rule.
+3,604 filings collected. **21 candidate companies** meet the three-buyer rule.
 
 Each company below has at least three distinct officers or directors reporting positive-price common-share purchases within seven calendar dates. Read the SEC filings before making a decision.
 
@@ -148,16 +148,6 @@ Each company below has at least three distinct officers or directors reporting p
 | Culley Brian M | President and CEO | 2026-11-16 | $37,098.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1310683/0001193125-26-464849.txt) |
 | Mulroy Michael H. | Director | 2026-11-17 | $26,100.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/876343/0001193125-26-468609.txt) |
 
-## NONE — HPS Net Lease Income REIT
-
-**3 buyers · $4,100,000.00 reported purchases**
-
-| Buyer | Role | Trade date | Reported value | Evidence |
-| --- | --- | --- | ---: | --- |
-| Koman James G. | Chief Executive Officer | 2026-11-16 | $1,500,000.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/2107762/0001193125-26-466820.txt) |
-| Lehman David Andrew | Director | 2026-11-16 | $2,500,000.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/2107762/0001193125-26-466834.txt) |
-| Leavitt David | President | 2026-11-16 | $100,000.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/2107762/0001193125-26-466839.txt) |
-
 ## PICS — PicS N.V.
 
 **3 buyers · $556,660.38 reported purchases**
@@ -286,7 +276,7 @@ The dollar amount is what insiders reported purchasing. It is not a suggested in
 {
   "start": "2026-11-14",
   "as_of": "2026-11-20",
-  "generated_at": "2026-11-22T02:01:03-05:00",
+  "generated_at": "2026-11-22T02:04:15-05:00",
   "indexes": [
     {
       "date": "2026-11-16",
