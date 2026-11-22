@@ -90,3 +90,10 @@ def test_returns_use_next_session_open_and_matching_benchmark(monkeypatch):
     assert result.ret_1d == pytest.approx(10)
     assert result.spy_1d == pytest.approx(1)
     assert result.alpha_1d == pytest.approx(9)
+
+
+def test_sec_xml_date_timezone_suffix_is_supported():
+    filings = [[purchase(str(i), trade='2026-11-18-05:00')] for i in range(1, 4)]
+    clusters = find_clusters(filings, date(2026, 11, 20))
+    assert clusters[0]['buyers'] == 3
+    assert clusters[0]['purchases'][0]['transaction_date'] == '2026-11-18'

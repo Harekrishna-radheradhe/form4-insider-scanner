@@ -22,6 +22,14 @@ COMMON_STOCK = re.compile(r'\b(common stock|common shares|ordinary shares)\b', r
 PRIVATE_DEAL = re.compile(r'private placement|privately negotiated|subscription agreement|purchase agreement', re.I)
 
 
+def transaction_calendar_date(value):
+    """SEC XML dates may include a timezone suffix after the calendar date."""
+    match = re.fullmatch(r'(\d{4}-\d{2}-\d{2})(?:Z|[+-]\d{2}:\d{2})?', value or '')
+    if not match:
+        raise ValueError(f'Invalid SEC transaction date: {value!r}')
+    return date.fromisoformat(match.group(1))
+
+
 def eligible_purchase(transaction):
     """Conservative candidates for manual filing review, including footnotes."""
     return (
@@ -55,9 +63,9 @@ def find_clusters(filings, as_of, days=7, minimum=3):
                 continue
             if transaction.get('document_type') == '4/A':
                 amended_issuers.add(transaction['issuer_cik'])
-            transaction_date = date.fromisoformat(transaction['transaction_date'])
+            transaction_date = transaction_calendar_date(transaction['transaction_date'])
             if cutoff <= transaction_date <= as_of and eligible_purchase(transaction):
-                transactions.append(transaction)
+                transactions.append(dict(transaction, transaction_date=str(transaction_date)))
     groups = {}
     for transaction in transactions:
         issuer = transaction['issuer_cik']
@@ -98,7 +106,7 @@ def collect_filing(fetcher, parser, filing):
         for transaction in transactions:
             transaction['filing_url'] = (f'https://www.sec.gov/Archives/edgar/data/{cik}/'
                                          f'{accession.replace("-", "")}/{accession}-index.html')
-            date.fromisoformat(transaction['transaction_date'])
+            transaction['transaction_date'] = str(transaction_calendar_date(transaction['transaction_date']))
         # Amendments with only holdings still invalidate automated issuer counting.
         if root.findtext('documentType') == '4/A' and not transactions:
             transactions = [{
