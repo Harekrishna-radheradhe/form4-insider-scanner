@@ -2,9 +2,9 @@
 
 **Collection complete for requested published indexes**
 
-Latest filing day covered — **2026-11-24**. Generated — 2026-11-25T17:31:36-05:00.
+Latest filing day covered — **2026-11-25**. Generated — 2026-11-26T17:21:04-05:00.
 
-3,242 filings collected. **17 candidate companies** meet the three-buyer rule.
+3,010 filings collected. **14 candidate companies** meet the three-buyer rule.
 
 Each company below has at least three distinct officers or directors reporting positive-price common-share purchases within seven calendar dates. Read the SEC filings before making a decision.
 
@@ -38,12 +38,10 @@ Each company below has at least three distinct officers or directors reporting p
 
 ## RMIX — Suncrete, Inc.
 
-**4 buyers · $1,071,778.02 reported purchases**
+**4 buyers · $847,805.52 reported purchases**
 
 | Buyer | Role | Trade date | Reported value | Evidence |
 | --- | --- | --- | ---: | --- |
-| Rees-Jones David | Director | 2026-11-18 | $111,172.50 | [SEC filing](https://www.sec.gov/Archives/edgar/data/2124337/0001193125-26-467461.txt) |
-| HEYER ANDREW R | Director | 2026-11-18 | $112,800.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1259062/0001193125-26-469031.txt) |
 | HEYER ANDREW R | Director | 2026-11-19 | $70,000.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1259062/0001193125-26-469031.txt) |
 | Edgar Randall W. | Chief Executive Officer | 2026-11-19 | $100,055.52 | [SEC filing](https://www.sec.gov/Archives/edgar/data/2121178/0001193125-26-472865.txt) |
 | Rees-Jones David | Director | 2026-11-19 | $649,000.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/2124337/0001193125-26-472825.txt) |
@@ -61,33 +59,16 @@ Each company below has at least three distinct officers or directors reporting p
 | TEAGUE AJ | Director | 2026-11-19 | $10,213.50 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1697500/0001628280-26-075235.txt) |
 | TEAGUE AJ | Director | 2026-11-20 | $20,607.75 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1697500/0001628280-26-075235.txt) |
 
-## DTI — Drilling Tools International Corp
+## TROX — Tronox Holdings plc
 
-**4 buyers · $324,958.90 reported purchases**
-
-| Buyer | Role | Trade date | Reported value | Evidence |
-| --- | --- | --- | ---: | --- |
-| Domino Michael Wayne Jr. | President, DTR Division | 2026-11-18 | $56,595.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1981953/0001193125-26-468631.txt) |
-| Rodriguez Aldo | Vice President of Sales | 2026-11-18 | $49,965.30 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1884516/0001193125-26-468624.txt) |
-| Green Ira Harris Jr | Director | 2026-11-20 | $7,865.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1884516/0001193125-26-470306.txt) |
-| FURST JACK D | Director | 2026-11-18 | $81,250.95 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1884516/0001193125-26-470333.txt) |
-| FURST JACK D | Director | 2026-11-19 | $83,749.05 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1884516/0001193125-26-470333.txt) |
-| Domino Michael Wayne Jr. | President, DTR Division | 2026-11-19 | $45,533.60 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1981953/0001193125-26-472309.txt) |
-
-## TGEN — TECOGEN INC.
-
-**4 buyers · $53,533.50 reported purchases**
+**4 buyers · $246,708.24 reported purchases**
 
 | Buyer | Role | Trade date | Reported value | Evidence |
 | --- | --- | --- | ---: | --- |
-| Deschenes Roger P. | Chief Financial Officer | 2026-11-18 | $17,460.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1496259/0001496259-26-000005.txt) |
-| Deschenes Roger P. | Chief Financial Officer | 2026-11-18 | $537.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1496259/0001496259-26-000005.txt) |
-| Hatsopoulos John | Director | 2026-11-19 | $3,440.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1274775/0001274775-26-000005.txt) |
-| Hatsopoulos John | Director | 2026-11-19 | $1,685.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1274775/0001274775-26-000005.txt) |
-| Hatsopoulos John | Director | 2026-11-19 | $3,410.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1274775/0001274775-26-000005.txt) |
-| Hirsch Susan B | Director | 2026-11-20 | $16,400.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1827663/0001827663-26-000008.txt) |
-| Rangesh Abinand | Chief Executive Officer | 2026-11-19 | $2,625.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1917503/0001917503-26-000004.txt) |
-| Hatsopoulos John | Director | 2026-11-20 | $7,976.50 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1274775/0001274775-26-000007.txt) |
+| Jones Stephen J | Director | 2026-11-19 | $38,997.50 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1412239/0001140361-26-044904.txt) |
+| Srivisal John | SVP, Chief Financial Officer | 2026-11-20 | $48,516.99 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1583731/0001140361-26-045172.txt) |
+| Engle Jeffrey A. | SVP, Chief Commercial Officer | 2026-11-23 | $19,873.75 | [SEC filing](https://www.sec.gov/Archives/edgar/data/2012547/0001140361-26-045601.txt) |
+| Romano John D | CEO and Director | 2026-11-24 | $139,320.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1344537/0001140361-26-045598.txt) |
 
 ## UAVS — AgEagle Aerial Systems Inc.
 
@@ -102,59 +83,16 @@ Each company below has at least three distinct officers or directors reporting p
 
 ## TMS — Teamshares Inc
 
-**3 buyers · $924,055.26 reported purchases**
+**3 buyers · $1,123,011.50 reported purchases**
 
 | Buyer | Role | Trade date | Reported value | Evidence |
 | --- | --- | --- | ---: | --- |
-| Eu Alexander Zai De | President | 2026-11-18 | $57,450.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/2134179/0001628280-26-075322.txt) |
 | Eu Alexander Zai De | President | 2026-11-19 | $52,080.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/2134179/0001628280-26-075322.txt) |
 | Brown Michael Ashby Sutherland | Chief Executive Officer | 2026-11-19 | $652,500.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/2134354/0001628280-26-075377.txt) |
 | Moore Evan Charles | Director | 2026-11-19 | $85,416.76 | [SEC filing](https://www.sec.gov/Archives/edgar/data/2134155/0001628280-26-075564.txt) |
 | Moore Evan Charles | Director | 2026-11-20 | $76,608.50 | [SEC filing](https://www.sec.gov/Archives/edgar/data/2134155/0001628280-26-075564.txt) |
-
-## PICS — PicS N.V.
-
-**3 buyers · $556,660.38 reported purchases**
-
-| Buyer | Role | Trade date | Reported value | Evidence |
-| --- | --- | --- | ---: | --- |
-| Costa de Moura Mauricio | Director | 2026-11-19 | $24,760.38 | [SEC filing](https://www.sec.gov/Archives/edgar/data/2121107/0001213900-26-122452.txt) |
-| Teixeira Linares Marcio Antonio | Director | 2026-11-18 | $299,400.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1841644/0001213900-26-122444.txt) |
-| Pruett William Rodney | Director | 2026-11-18 | $232,500.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1841644/0001213900-26-122460.txt) |
-
-## APC — ARKO Petroleum Corp.
-
-**3 buyers · $402,040.00 reported purchases**
-
-| Buyer | Role | Trade date | Reported value | Evidence |
-| --- | --- | --- | ---: | --- |
-| HEYER ANDREW R | Director | 2026-11-18 | $279,000.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/2080921/0001193125-26-468657.txt) |
-| FRIEDMAN AVRAM Z | Director | 2026-11-19 | $97,200.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/2080921/0001193125-26-472323.txt) |
-| Bricks Maury | General Counsel and Secretary | 2026-11-20 | $25,840.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/2080921/0001193125-26-472324.txt) |
-
-## CWBC — Community West Bancshares
-
-**3 buyers · $375,951.00 reported purchases**
-
-| Buyer | Role | Trade date | Reported value | Evidence |
-| --- | --- | --- | ---: | --- |
-| GILL JAGROOP | Director | 2026-11-18 | $293,988.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1127371/0001628280-26-075017.txt) |
-| BARTLEIN ROBERT | Director | 2026-11-19 | $24,050.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1063730/0001628280-26-075277.txt) |
-| BARTLEIN ROBERT | Director | 2026-11-19 | $24,172.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1063730/0001628280-26-075277.txt) |
-| BARTLEIN ROBERT | Director | 2026-11-19 | $24,600.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1063730/0001628280-26-075277.txt) |
-| STOVESAND KIRK | Director | 2026-11-20 | $4,830.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1127371/0001628280-26-075280.txt) |
-| STOVESAND KIRK | Director | 2026-11-20 | $4,311.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1127371/0001628280-26-075280.txt) |
-
-## PAL — Proficient Auto Logistics, Inc
-
-**3 buyers · $181,232.26 reported purchases**
-
-| Buyer | Role | Trade date | Reported value | Evidence |
-| --- | --- | --- | ---: | --- |
-| COL DOUGLAS L | Director | 2026-11-18 | $84,300.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1799742/0001213900-26-122313.txt) |
-| Schraudenbach John | Director | 2026-11-18 | $78,120.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1998768/0001213900-26-122314.txt) |
-| Wright Bradley J. | Chief Financial Officer | 2026-11-20 | $13,900.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1998768/0001213900-26-123289.txt) |
-| Wright Bradley J. | Chief Financial Officer | 2026-11-20 | $4,912.26 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1998768/0001213900-26-123289.txt) |
+| Moore Evan Charles | Director | 2026-11-23 | $128,348.64 | [SEC filing](https://www.sec.gov/Archives/edgar/data/2134155/0001628280-26-076029.txt) |
+| Moore Evan Charles | Director | 2026-11-24 | $128,057.60 | [SEC filing](https://www.sec.gov/Archives/edgar/data/2134155/0001628280-26-076029.txt) |
 
 ## BULL — Webull Corp
 
@@ -167,6 +105,16 @@ Each company below has at least three distinct officers or directors reporting p
 | Wang Haichen | Chief Financial Officer | 2026-11-23 | $90,000.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/2093135/0002093135-26-000006.txt) |
 | Denier Anthony Michael | President | 2026-11-24 | $21,131.50 | [SEC filing](https://www.sec.gov/Archives/edgar/data/2093121/0002093121-26-000011.txt) |
 
+## DTI — Drilling Tools International Corp
+
+**3 buyers · $137,147.65 reported purchases**
+
+| Buyer | Role | Trade date | Reported value | Evidence |
+| --- | --- | --- | ---: | --- |
+| Green Ira Harris Jr | Director | 2026-11-20 | $7,865.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1884516/0001193125-26-470306.txt) |
+| FURST JACK D | Director | 2026-11-19 | $83,749.05 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1884516/0001193125-26-470333.txt) |
+| Domino Michael Wayne Jr. | President, DTR Division | 2026-11-19 | $45,533.60 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1981953/0001193125-26-472309.txt) |
+
 ## AEON — AEON Biopharma, Inc.
 
 **3 buyers · $61,785.78 reported purchases**
@@ -178,15 +126,28 @@ Each company below has at least three distinct officers or directors reporting p
 | Bancroft Robert E. | President and CEO | 2026-11-19 | $19,590.02 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1837607/0002066370-26-000002.txt) |
 | Bancroft Robert E. | President and CEO | 2026-11-20 | $4,732.23 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1837607/0002066370-26-000004.txt) |
 
-## LFT — Lument Finance Trust, Inc.
+## TGEN — TECOGEN INC.
 
-**3 buyers · $54,995.45 reported purchases**
+**3 buyers · $44,001.73 reported purchases**
 
 | Buyer | Role | Trade date | Reported value | Evidence |
 | --- | --- | --- | ---: | --- |
-| Flynn James Peter | CEO | 2026-11-18 | $10,112.74 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1727995/0001727995-26-000008.txt) |
+| Hatsopoulos John | Director | 2026-11-19 | $3,440.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1274775/0001274775-26-000005.txt) |
+| Hatsopoulos John | Director | 2026-11-19 | $1,685.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1274775/0001274775-26-000005.txt) |
+| Hatsopoulos John | Director | 2026-11-19 | $3,410.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1274775/0001274775-26-000005.txt) |
+| Hirsch Susan B | Director | 2026-11-20 | $16,400.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1827663/0001827663-26-000008.txt) |
+| Rangesh Abinand | Chief Executive Officer | 2026-11-19 | $2,625.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1917503/0001917503-26-000004.txt) |
+| Hatsopoulos John | Director | 2026-11-20 | $7,976.50 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1274775/0001274775-26-000007.txt) |
+| Hatsopoulos John | Director | 2026-11-24 | $7,242.26 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1274775/0001274775-26-000009.txt) |
+| Hatsopoulos John | Director | 2026-11-25 | $1,222.97 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1274775/0001274775-26-000011.txt) |
+
+## LFT — Lument Finance Trust, Inc.
+
+**3 buyers · $41,142.71 reported purchases**
+
+| Buyer | Role | Trade date | Reported value | Evidence |
+| --- | --- | --- | ---: | --- |
 | Flynn James Peter | CEO | 2026-11-19 | $4,949.12 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1727995/0001727995-26-000008.txt) |
-| HOULIHAN WILLIAM A | Director | 2026-11-18 | $3,740.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1185292/0001185292-26-000015.txt) |
 | HOULIHAN WILLIAM A | Director | 2026-11-19 | $3,670.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1185292/0001185292-26-000017.txt) |
 | Hunt James Christopher | Director | 2026-11-20 | $4,919.59 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1727207/0001727207-26-000008.txt) |
 | Hunt James Christopher | Director | 2026-11-23 | $10,050.00 | [SEC filing](https://www.sec.gov/Archives/edgar/data/1727207/0001727207-26-000008.txt) |
@@ -220,15 +181,10 @@ The dollar amount is what insiders reported purchasing. It is not a suggested in
 
 ```json
 {
-  "start": "2026-11-18",
-  "as_of": "2026-11-24",
-  "generated_at": "2026-11-25T17:31:36-05:00",
+  "start": "2026-11-19",
+  "as_of": "2026-11-25",
+  "generated_at": "2026-11-26T17:21:04-05:00",
   "indexes": [
-    {
-      "date": "2026-11-18",
-      "filings": 760,
-      "amendments": 2
-    },
     {
       "date": "2026-11-19",
       "filings": 571,
@@ -248,10 +204,15 @@ The dollar amount is what insiders reported purchasing. It is not a suggested in
       "date": "2026-11-24",
       "filings": 653,
       "amendments": 9
+    },
+    {
+      "date": "2026-11-25",
+      "filings": 526,
+      "amendments": 4
     }
   ],
   "errors": [],
-  "stored_filings": 3242,
+  "stored_filings": 3010,
   "closed_dates": [
     "2026-11-21",
     "2026-11-22"
