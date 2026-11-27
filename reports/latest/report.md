@@ -2,7 +2,7 @@
 
 **Collection complete for requested published indexes**
 
-Latest filing day covered — **2026-11-25**. Generated — 2026-11-26T17:21:04-05:00.
+Latest filing day covered — **2026-11-25**. Generated — 2026-11-27T16:57:52-05:00.
 
 3,010 filings collected. **14 candidate companies** meet the three-buyer rule.
 
@@ -183,7 +183,7 @@ The dollar amount is what insiders reported purchasing. It is not a suggested in
 {
   "start": "2026-11-19",
   "as_of": "2026-11-25",
-  "generated_at": "2026-11-26T17:21:04-05:00",
+  "generated_at": "2026-11-27T16:57:52-05:00",
   "indexes": [
     {
       "date": "2026-11-19",
